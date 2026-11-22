@@ -43,6 +43,7 @@ async def _contract_review_async(
     document_ids: list[str] | None,
     clause_types: list[str] | None,
     playbook_notes: str | None,
+    playbook_id: str | None,
     provider: str | None,
     model: str | None,
 ) -> dict[str, Any]:
@@ -59,6 +60,7 @@ async def _contract_review_async(
                 document_ids=[uuid.UUID(d) for d in document_ids] if document_ids else None,
                 clause_types=clause_types,
                 playbook_notes=playbook_notes,
+                playbook_id=uuid.UUID(playbook_id) if playbook_id else None,
                 provider=provider,
                 model=model,
                 settings=cfg,
@@ -143,13 +145,21 @@ def contract_review_task(
     document_ids: list[str] | None = None,
     clause_types: list[str] | None = None,
     playbook_notes: str | None = None,
+    playbook_id: str | None = None,
     provider: str | None = None,
     model: str | None = None,
 ) -> dict[str, Any]:
     """Celery task to run contract/clause review on a matter."""
     return asyncio.run(
         _contract_review_async(
-            matter_id, task_id, document_ids, clause_types, playbook_notes, provider, model
+            matter_id,
+            task_id,
+            document_ids,
+            clause_types,
+            playbook_notes,
+            playbook_id,
+            provider,
+            model,
         )
     )
 

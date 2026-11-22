@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-lint-unit-eval:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,docx]"
+      - name: Ruff lint
+        run: ruff check app tests alembic evals
+      - name: Mypy static type check
+        run: mypy app evals
+      - name: Run offline pytest suite
+        run: pytest -v -m "not integration"
+      - name: Run deterministic legal evaluation benchmark
+        run: python -m evals.runner --provider mock --markdown
+
+  backend-postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: paralegal
+          POSTGRES_PASSWORD: paralegal
+          POSTGRES_DB: ai_paralegal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U paralegal -d ai_paralegal_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      POSTGRES_TEST_URL: postgresql+asyncpg://paralegal:paralegal@localhost:5432/ai_paralegal_test
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,docx]"
+      - name: Run PostgreSQL pgvector & Alembic integration tests
+        run: pytest -v -m integration
+
+  frontend-typecheck-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Vite production build
+        run: npm run build
+
+  docker-compose-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Docker Compose manifest
+        run: docker compose config -q
+      - name: Build Docker images
+        run: docker compose build

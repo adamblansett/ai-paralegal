@@ -29,5 +29,8 @@ def test_alembic_upgrade_head_creates_all_core_tables(tmp_path: Path) -> None:
         "review_tasks",
         "extracted_findings",
         "audit_logs",
+        "users",
+        "matter_memberships",
+        "playbooks",
     }
     assert expected.issubset(tables)

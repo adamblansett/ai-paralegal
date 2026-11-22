@@ -4,12 +4,19 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_app_settings, get_db, get_embeddings, get_router
+from app.api.deps import (
+    get_app_settings,
+    get_current_user,
+    get_db,
+    get_embeddings,
+    get_router,
+    require_matter_access,
+)
 from app.core.config import Settings
 from app.llm.embeddings import EmbeddingService
 from app.llm.router import ModelRouter
-from app.models.matter import Matter
 from app.models.review_task import ReviewTask
+from app.models.user import User
 from app.schemas.analysis import (
     ContractReviewRequest,
     DiscoverySynthesisRequest,
@@ -32,13 +39,6 @@ from app.workers.dispatch import (
 router = APIRouter(tags=["analyses"])
 
 
-async def _ensure_matter(session: AsyncSession, matter_id: uuid.UUID) -> Matter:
-    matter = await session.get(Matter, matter_id)
-    if matter is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matter not found.")
-    return matter
-
-
 @router.post(
     "/matters/{matter_id}/analyses/contract-review",
     response_model=ReviewTaskRead,
@@ -48,12 +48,13 @@ async def trigger_contract_review(
     matter_id: uuid.UUID,
     payload: ContractReviewRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_app_settings),
     model_router: ModelRouter = Depends(get_router),
 ) -> ReviewTaskRead:
     """Launch contract and clause risk analysis for a matter."""
-    await _ensure_matter(session, matter_id)
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=True)
 
     task = ReviewTask(
         matter_id=matter_id,
@@ -82,6 +83,7 @@ async def trigger_contract_review(
         document_ids=payload.document_ids,
         clause_types=payload.clause_types,
         playbook_notes=payload.playbook_notes,
+        playbook_id=payload.playbook_id,
         provider=payload.provider,
         model=payload.model,
     )
@@ -98,12 +100,13 @@ async def trigger_discovery_synthesis(
     matter_id: uuid.UUID,
     payload: DiscoverySynthesisRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_app_settings),
     model_router: ModelRouter = Depends(get_router),
 ) -> ReviewTaskRead:
     """Launch cross-document discovery synthesis across indexed matter records."""
-    await _ensure_matter(session, matter_id)
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=True)
 
     task = ReviewTask(
         matter_id=matter_id,
@@ -137,11 +140,12 @@ async def trigger_discovery_synthesis(
 async def search_matter(
     matter_id: uuid.UUID,
     payload: SearchRequest,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     embeddings: EmbeddingService = Depends(get_embeddings),
 ) -> SearchResponse:
     """Run hybrid lexical + vector search across matter chunks."""
-    await _ensure_matter(session, matter_id)
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=False)
     hits = await hybrid_search(
         session,
         embeddings,
@@ -179,13 +183,14 @@ async def search_matter(
 async def research_query(
     matter_id: uuid.UUID,
     payload: ResearchQueryRequest,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_app_settings),
     model_router: ModelRouter = Depends(get_router),
     embeddings: EmbeddingService = Depends(get_embeddings),
 ) -> ResearchQueryResponse:
     """Answer a legal research question strictly grounded in uploaded matter sources."""
-    await _ensure_matter(session, matter_id)
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=True)
     result = await run_research_query(
         session,
         model_router,
@@ -211,13 +216,14 @@ async def generate_draft(
     matter_id: uuid.UUID,
     payload: DraftRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_app_settings),
     model_router: ModelRouter = Depends(get_router),
     embeddings: EmbeddingService = Depends(get_embeddings),
 ) -> ReviewTaskRead:
     """Generate a citation-grounded legal draft requiring attorney review."""
-    await _ensure_matter(session, matter_id)
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=True)
 
     task = ReviewTask(
         matter_id=matter_id,
@@ -253,10 +259,11 @@ async def generate_draft(
 async def list_matter_tasks(
     matter_id: uuid.UUID,
     task_type: str | None = None,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[ReviewTaskRead]:
     """List analysis and ingestion tasks for a matter."""
-    await _ensure_matter(session, matter_id)
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=False)
     stmt = (
         select(ReviewTask)
         .where(ReviewTask.matter_id == matter_id)
@@ -271,10 +278,14 @@ async def list_matter_tasks(
 @router.get("/tasks/{task_id}", response_model=ReviewTaskRead)
 async def get_task(
     task_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> ReviewTaskRead:
     """Fetch status and structured result for a background review or ingestion task."""
     task = await session.get(ReviewTask, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+    await require_matter_access(
+        session, matter_id=task.matter_id, user=current_user, write=False
+    )
     return ReviewTaskRead.model_validate(task)

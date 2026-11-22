@@ -38,11 +38,17 @@ _WORD_RE = re.compile(r"[a-z0-9]{3,}")
 
 def _pick_excerpt(content: str, keywords: list[str], max_len: int = 240) -> str:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", content) if s.strip()]
+    if not sentences:
+        return content.strip()[:max_len]
+    best_sentence = sentences[0]
+    best_score = 0
     for sentence in sentences:
         lower = sentence.lower()
-        if any(kw in lower for kw in keywords):
-            return sentence[:max_len]
-    return (sentences[0] if sentences else content.strip())[:max_len]
+        score = sum(1 for kw in keywords if kw in lower)
+        if score > best_score:
+            best_score = score
+            best_sentence = sentence
+    return best_sentence[:max_len]
 
 
 def _score_chunk(chunk: SourceChunkContext, keywords: list[str]) -> int:
@@ -105,6 +111,10 @@ class MockLLMProvider(LLMProvider):
                     "renewal_notice",
                 ],
             )
+        )
+        playbook_rules_raw = request.metadata.get("playbook_rules")
+        playbook_rules: dict[str, dict[str, object]] = (
+            playbook_rules_raw if isinstance(playbook_rules_raw, dict) else {}
         )
         clause_specs: dict[str, tuple[str, list[str]]] = {
             "indemnification": ("Indemnification Clause", ["indemnif", "hold harmless", "defend"]),
@@ -259,6 +269,12 @@ class MockLLMProvider(LLMProvider):
             finding_type: Literal["clause", "risk_flag", "missing_protection"] = (
                 "risk_flag" if is_non_standard else "clause"
             )
+            rule_info = playbook_rules.get(clause_key, {})
+            fallback_text = (
+                str(rule_info.get("fallback_position"))
+                if is_non_standard and rule_info.get("fallback_position")
+                else None
+            )
             findings.append(
                 ClauseFindingOutput(
                     finding_type=finding_type,
@@ -273,6 +289,7 @@ class MockLLMProvider(LLMProvider):
                         if is_non_standard
                         else "Confirm business alignment during routine sign-off."
                     ),
+                    proposed_redline=fallback_text,
                     citations=[RawCitation(chunk_id=best.chunk_id, quote=excerpt)],
                 )
             )
@@ -299,6 +316,12 @@ class MockLLMProvider(LLMProvider):
             if not any(kw in joined_text for kw in kws):
                 missing_protections.append(title)
                 anchor = chunks[-1] if chunks else None
+                cat_rule = playbook_rules.get(cat, {})
+                cat_fallback = (
+                    str(cat_rule.get("fallback_position"))
+                    if cat_rule.get("fallback_position")
+                    else None
+                )
                 findings.append(
                     ClauseFindingOutput(
                         finding_type="missing_protection",
@@ -311,6 +334,7 @@ class MockLLMProvider(LLMProvider):
                         recommended_action=(
                             f"Add explicit {title.replace('Missing ', '')} addendum."
                         ),
+                        proposed_redline=cat_fallback,
                         citations=[
                             RawCitation(
                                 chunk_id=anchor.chunk_id,

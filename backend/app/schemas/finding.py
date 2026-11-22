@@ -35,7 +35,7 @@ class ExtractedFindingRead(BaseModel):
 
 class FindingReviewUpdate(BaseModel):
     review_status: Literal["pending_review", "approved", "flagged"]
-    reviewer_name: str = Field(..., min_length=1, max_length=128)
+    reviewer_name: str | None = Field(default=None, max_length=128)
     reviewer_notes: str | None = None
     edited_summary: str | None = None
 
@@ -43,7 +43,7 @@ class FindingReviewUpdate(BaseModel):
 class BatchReviewRequest(BaseModel):
     finding_ids: list[uuid.UUID] = Field(..., min_length=1)
     review_status: Literal["pending_review", "approved", "flagged"]
-    reviewer_name: str = Field(..., min_length=1, max_length=128)
+    reviewer_name: str | None = Field(default=None, max_length=128)
     reviewer_notes: str | None = None
 
 

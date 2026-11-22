@@ -2,13 +2,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_v1_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
-from app.db.session import dispose_engine
+from app.db.session import dispose_engine, get_session_factory
+from app.services.seed import seed_defaults
+
+logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
@@ -17,6 +21,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.log_level)
     if settings.storage_backend == "local":
         Path(settings.local_storage_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        factory = get_session_factory(settings)
+        async with factory() as session:
+            await seed_defaults(session, settings)
+    except Exception as exc:
+        logger.warning("lifespan_seed_skipped", reason=str(exc))
     yield
     await dispose_engine()
 

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.document import Document
     from app.models.finding import ExtractedFinding
     from app.models.review_task import ReviewTask
+    from app.models.user import MatterMembership
 
 
 def _utcnow() -> datetime:
@@ -50,5 +51,8 @@ class Matter(Base):
         back_populates="matter", cascade="all, delete-orphan"
     )
     audit_logs: Mapped[list["AuditLog"]] = relationship(
+        back_populates="matter", cascade="all, delete-orphan"
+    )
+    memberships: Mapped[list["MatterMembership"]] = relationship(
         back_populates="matter", cascade="all, delete-orphan"
     )

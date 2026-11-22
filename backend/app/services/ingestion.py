@@ -7,11 +7,13 @@ from pathlib import Path
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.llm.embeddings import EmbeddingService
 from app.models.document import Document, DocumentChunk
 from app.models.review_task import ReviewTask
 from app.services.audit import record_audit_log
 from app.services.chunker import chunk_segments
+from app.services.ocr import OCRService
 from app.services.parsers import parse_document_bytes
 from app.storage.base import StorageBackend
 
@@ -32,6 +34,7 @@ async def upload_document(
     content_type: str,
     data: bytes,
     document_type: str = "general",
+    actor_id: str = "legal_ops_user",
 ) -> tuple[Document, ReviewTask]:
     """Store uploaded bytes and create Document + queued ReviewTask records."""
     safe_name = _sanitize_filename(filename)
@@ -73,7 +76,7 @@ async def upload_document(
         review_task_id=task.id,
         action="document_uploaded",
         actor_type="human",
-        actor_id="legal_ops_user",
+        actor_id=actor_id,
         new_state="pending",
         notes=f"Uploaded {doc.filename} ({len(data)} bytes, sha256={sha256_hash[:12]}...)",
     )
@@ -121,6 +124,11 @@ async def process_document(
     await session.commit()
 
     try:
+        cfg = get_settings()
+        ocr_service = OCRService(
+            backend_mode=cfg.ocr_backend,
+            min_chars_per_page=cfg.ocr_min_chars_per_page,
+        )
         raw_bytes = await storage.get_bytes(doc.storage_key)
         hinted = None if doc.document_type == "general" else doc.document_type
         parsed = parse_document_bytes(
@@ -128,6 +136,7 @@ async def process_document(
             raw_bytes,
             content_type=doc.content_type,
             hinted_document_type=hinted,
+            ocr_service=ocr_service,
         )
         chunk_drafts = chunk_segments(parsed.segments)
         embeddings = (

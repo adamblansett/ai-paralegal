@@ -7,6 +7,7 @@ from app.core.config import Settings
 from app.core.disclaimer import LEGAL_DISCLAIMER
 from app.llm.router import ModelRouter
 from app.schemas.common import HealthResponse
+from app.services.ocr import OCRService
 
 router = APIRouter(tags=["health"])
 
@@ -34,5 +35,8 @@ async def health_check(
         supported_models=model_router.supported_models(),
         storage_backend=settings.storage_backend,
         task_execution_mode=settings.task_execution_mode,
+        auth_enabled=True,
+        ocr_backend=settings.ocr_backend,
+        tesseract_available=OCRService.is_tesseract_available(),
         disclaimer=LEGAL_DISCLAIMER,
     )

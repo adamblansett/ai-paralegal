@@ -37,12 +37,15 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*"]
+include = ["app*", "evals*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "integration: live PostgreSQL pgvector and Redis integration tests",
+]
 
 [tool.ruff]
 target-version = "py312"

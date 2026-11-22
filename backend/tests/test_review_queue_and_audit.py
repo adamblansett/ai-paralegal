@@ -37,12 +37,12 @@ async def test_review_queue_transitions_edits_batch_and_audit_trail(
     second_id = findings[1]["id"]
     batch_ids = [f["id"] for f in findings[2:4]]
 
-    # Approve with attorney edit & notes
+    # Approve with attorney edit & notes (reviewer_name spoof attempt ignored in favor of JWT user)
     approve_resp = await async_client.patch(
         f"/api/v1/findings/{first_id}/review",
         json={
             "review_status": "approved",
-            "reviewer_name": "E. Rostova, Esq.",
+            "reviewer_name": "Spoofed Name",
             "reviewer_notes": "Confirmed against signed Section 6.",
             "edited_summary": "Attorney-verified summary: Client indemnity is uncapped.",
         },
@@ -50,7 +50,7 @@ async def test_review_queue_transitions_edits_batch_and_audit_trail(
     assert approve_resp.status_code == 200
     approved = approve_resp.json()
     assert approved["review_status"] == "approved"
-    assert approved["reviewer_name"] == "E. Rostova, Esq."
+    assert approved["reviewer_name"] == "Elena Rostova, Esq. (partner)"
     assert approved["edited_summary"] == "Attorney-verified summary: Client indemnity is uncapped."
 
     # Flag second finding
@@ -58,7 +58,6 @@ async def test_review_queue_transitions_edits_batch_and_audit_trail(
         f"/api/v1/findings/{second_id}/review",
         json={
             "review_status": "flagged",
-            "reviewer_name": "E. Rostova, Esq.",
             "reviewer_notes": "Escalate to managing partner before client call.",
         },
     )
@@ -71,7 +70,6 @@ async def test_review_queue_transitions_edits_batch_and_audit_trail(
         json={
             "finding_ids": batch_ids,
             "review_status": "approved",
-            "reviewer_name": "M. Partner",
             "reviewer_notes": "Batch sign-off",
         },
     )

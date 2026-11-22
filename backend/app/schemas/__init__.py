@@ -10,6 +10,14 @@ from app.schemas.analysis import (
     SearchResponse,
 )
 from app.schemas.audit import AuditLogRead
+from app.schemas.auth import (
+    MatterMemberAdd,
+    MatterMemberRead,
+    TokenResponse,
+    UserLogin,
+    UserRead,
+    UserRegister,
+)
 from app.schemas.common import HealthResponse, MessageResponse
 from app.schemas.document import DocumentChunkRead, DocumentRead, DocumentUploadResponse
 from app.schemas.finding import (
@@ -19,6 +27,12 @@ from app.schemas.finding import (
     FindingReviewUpdate,
 )
 from app.schemas.matter import MatterCreate, MatterRead, MatterStats, MatterUpdate
+from app.schemas.playbook import (
+    PlaybookCreate,
+    PlaybookRead,
+    PlaybookRuleSchema,
+    PlaybookUpdate,
+)
 
 __all__ = [
     "AuditLogRead",
@@ -34,14 +48,24 @@ __all__ = [
     "FindingReviewUpdate",
     "HealthResponse",
     "MatterCreate",
+    "MatterMemberAdd",
+    "MatterMemberRead",
     "MatterRead",
     "MatterStats",
     "MatterUpdate",
     "MessageResponse",
+    "PlaybookCreate",
+    "PlaybookRead",
+    "PlaybookRuleSchema",
+    "PlaybookUpdate",
     "ResearchQueryRequest",
     "ResearchQueryResponse",
     "ReviewTaskRead",
     "SearchHitRead",
     "SearchRequest",
     "SearchResponse",
+    "TokenResponse",
+    "UserLogin",
+    "UserRead",
+    "UserRegister",
 ]

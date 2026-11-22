@@ -1,12 +1,12 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user, get_db, require_matter_access
 from app.models.audit_log import AuditLog
-from app.models.matter import Matter
+from app.models.user import User
 from app.schemas.audit import AuditLogRead
 
 router = APIRouter(tags=["audit"])
@@ -17,12 +17,11 @@ async def list_matter_audit_logs(
     matter_id: uuid.UUID,
     action: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[AuditLogRead]:
     """Return immutable audit log entries for a matter (newest first)."""
-    matter = await session.get(Matter, matter_id)
-    if matter is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matter not found.")
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=False)
 
     stmt = (
         select(AuditLog)

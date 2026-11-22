@@ -13,6 +13,7 @@ import type { DocumentChunkItem, DocumentItem } from '../types/api';
 interface DocumentsTabProps {
   matterId: string;
   documents: DocumentItem[];
+  canWrite?: boolean;
   onRefresh: () => Promise<void>;
 }
 
@@ -23,7 +24,12 @@ const STATUS_STYLE: Record<string, string> = {
   failed: 'bg-rose-50 text-rose-800 border-rose-200',
 };
 
-export function DocumentsTab({ matterId, documents, onRefresh }: DocumentsTabProps) {
+export function DocumentsTab({
+  matterId,
+  documents,
+  canWrite = true,
+  onRefresh,
+}: DocumentsTabProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [documentType, setDocumentType] = useState('general');
   const [uploading, setUploading] = useState(false);
@@ -171,12 +177,12 @@ export function DocumentsTab({ matterId, documents, onRefresh }: DocumentsTabPro
             />
             <button
               type="button"
-              disabled={uploading}
+              disabled={uploading || !canWrite}
               onClick={() => fileInputRef.current?.click()}
               className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
             >
               <UploadCloud className="h-4 w-4" />
-              {uploading ? 'Uploading...' : 'Select Files'}
+              {uploading ? 'Uploading...' : canWrite ? 'Select Files' : 'Read-Only'}
             </button>
           </div>
         </div>
@@ -241,6 +247,16 @@ export function DocumentsTab({ matterId, documents, onRefresh }: DocumentsTabPro
                         )}
                         {doc.ingestion_status}
                       </span>
+                      {Boolean(doc.metadata_json?.ocr_applied) && (
+                        <span className="ml-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-800 ring-1 ring-indigo-200">
+                          OCR ({String(doc.metadata_json?.ocr_backend ?? 'applied')})
+                        </span>
+                      )}
+                      {Boolean(doc.metadata_json?.ocr_required) && (
+                        <span className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                          Needs OCR
+                        </span>
+                      )}
                       {doc.error_message && (
                         <p className="mt-1 max-w-xs truncate text-[11px] text-rose-600">
                           {doc.error_message}
@@ -263,22 +279,26 @@ export function DocumentsTab({ matterId, documents, onRefresh }: DocumentsTabPro
                           <Eye className="h-3 w-3" />
                           Chunks
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleReprocess(doc.id)}
-                          title="Reprocess document"
-                          className="rounded border border-slate-200 p-1 text-slate-600 hover:bg-slate-100"
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDelete(doc.id)}
-                          title="Delete document"
-                          className="rounded border border-rose-200 p-1 text-rose-600 hover:bg-rose-50"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {canWrite && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void handleReprocess(doc.id)}
+                              title="Reprocess document"
+                              className="rounded border border-slate-200 p-1 text-slate-600 hover:bg-slate-100"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDelete(doc.id)}
+                              title="Delete document"
+                              className="rounded border border-rose-200 p-1 text-rose-600 hover:bg-rose-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

@@ -2,6 +2,55 @@ export type LLMProviderName = 'mock' | 'ollama' | 'gemini';
 export type ReviewStatus = 'pending_review' | 'approved' | 'flagged';
 export type SeverityLevel = 'info' | 'low' | 'medium' | 'high' | 'critical';
 export type VerificationStatus = 'verified_exact' | 'verified_fuzzy' | 'unverified';
+export type UserRole = 'partner' | 'associate' | 'paralegal' | 'auditor';
+export type AccessLevel = 'owner' | 'editor' | 'reviewer' | 'viewer';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  user: UserProfile;
+}
+
+export interface MatterMember {
+  id: string;
+  matter_id: string;
+  user_id: string;
+  user_email: string;
+  user_full_name: string;
+  user_role: UserRole;
+  access_level: AccessLevel;
+  created_at: string;
+}
+
+export interface PlaybookRule {
+  clause_type: string;
+  standard_position: string;
+  fallback_position: string;
+  red_flag_patterns: string[];
+  required: boolean;
+  severity_if_deviated: SeverityLevel;
+}
+
+export interface Playbook {
+  id: string;
+  name: string;
+  practice_area: string;
+  description: string | null;
+  is_default: boolean;
+  created_by_id: string | null;
+  rules_json: PlaybookRule[];
+  created_at: string;
+  updated_at: string;
+}
 
 export interface HealthResponse {
   status: string;
@@ -13,6 +62,9 @@ export interface HealthResponse {
   supported_models: Record<string, string[]>;
   storage_backend: string;
   task_execution_mode: string;
+  auth_enabled: boolean;
+  ocr_backend: string;
+  tesseract_available: boolean;
   disclaimer: string;
 }
 

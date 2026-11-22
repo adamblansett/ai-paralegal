@@ -97,6 +97,7 @@ class ClauseFindingOutput(BaseModel):
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     is_non_standard: bool = False
     recommended_action: str | None = None
+    proposed_redline: str | None = None
     citations: list[RawCitation] = Field(default_factory=list)
 
 

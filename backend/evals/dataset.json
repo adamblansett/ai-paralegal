@@ -1,0 +1,89 @@
+{
+  "version": "1.0.0",
+  "contract_review_cases": [
+    {
+      "id": "msa-standard-risks",
+      "sample_file": "sample_msa.txt",
+      "expected_clauses": [
+        "indemnification",
+        "limitation_of_liability",
+        "termination",
+        "ip_assignment",
+        "confidentiality",
+        "governing_law",
+        "renewal_notice"
+      ],
+      "expected_risk_categories": [
+        "indemnification",
+        "limitation_of_liability",
+        "ip_assignment",
+        "confidentiality",
+        "termination"
+      ],
+      "expected_missing_categories": [
+        "data_security_breach",
+        "insurance_coverage"
+      ]
+    }
+  ],
+  "discovery_cases": [
+    {
+      "id": "meridian-apex-contradictions",
+      "sample_files": [
+        "sample_msa.txt",
+        "sample_discovery_emails.eml"
+      ],
+      "expected_contradiction_terms": [
+        "$185,000",
+        "$240,000",
+        "12 months",
+        "1 month"
+      ],
+      "expected_omission_terms": [
+        "exhibit b"
+      ],
+      "min_timeline_events": 3
+    }
+  ],
+  "qa_cases": [
+    {
+      "id": "qa-annual-fee-conflict",
+      "sample_files": [
+        "sample_msa.txt",
+        "sample_discovery_emails.eml"
+      ],
+      "question": "What annual subscription fee is stated in the MSA and in the January 10 email?",
+      "expected_answer_terms": [
+        "240,000",
+        "185,000"
+      ]
+    },
+    {
+      "id": "qa-liability-cap",
+      "sample_files": [
+        "sample_msa.txt"
+      ],
+      "question": "What is Vendor's total aggregate liability cap under Section 7?",
+      "expected_answer_terms": [
+        "20,000",
+        "one (1) month"
+      ]
+    }
+  ],
+  "hallucination_traps": [
+    {
+      "id": "trap-fabricated-quote",
+      "chunk_id": "eval-chunk-0",
+      "real_content": "VENDOR'S TOTAL AGGREGATE LIABILITY SHALL NOT EXCEED ONE (1) MONTH OF FEES ($20,000).",
+      "fake_chunk_id": "00000000-0000-0000-0000-000000000999",
+      "fabricated_quote": "Vendor accepts unlimited liability for consequential damages and guarantees 99.999% uptime."
+    },
+    {
+      "id": "trap-wrong-quote-real-chunk",
+      "chunk_id": "eval-chunk-1",
+      "real_content": "Client shall pay Vendor an annual subscription fee of $240,000.",
+      "fake_chunk_id": "eval-chunk-1",
+      "fabricated_quote": "Client shall pay zero fees for the initial 36-month enterprise trial period."
+    }
+  ]
+}

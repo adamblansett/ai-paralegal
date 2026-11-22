@@ -6,15 +6,19 @@ import {
   Loader2,
   Scale,
   ShieldAlert,
+  Users,
 } from 'lucide-react';
-import { api } from './api/client';
+import { api, tokenStore } from './api/client';
+import { AuthGate } from './components/AuthGate';
 import { ContractReviewTab } from './components/ContractReviewTab';
 import { DisclaimerBanner } from './components/DisclaimerBanner';
 import { DiscoveryDraftingTab } from './components/DiscoveryDraftingTab';
 import { DocumentsTab } from './components/DocumentsTab';
 import { MatterSidebar } from './components/MatterSidebar';
 import { NewMatterModal } from './components/NewMatterModal';
+import { PlaybookModal } from './components/PlaybookModal';
 import { ReviewAuditTab } from './components/ReviewAuditTab';
+import { TeamAccessModal } from './components/TeamAccessModal';
 import type {
   AuditLogEntry,
   DocumentItem,
@@ -22,18 +26,26 @@ import type {
   HealthResponse,
   Matter,
   MatterCreateInput,
+  Playbook,
   ReviewTaskItem,
+  UserProfile,
 } from './types/api';
 
 type WorkspaceTab = 'documents' | 'contracts' | 'discovery' | 'review';
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [matters, setMatters] = useState<Matter[]>([]);
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [selectedMatterId, setSelectedMatterId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('documents');
   const [modalOpen, setModalOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [teamModalOpen, setTeamModalOpen] = useState(false);
+  const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -41,11 +53,37 @@ export default function App() {
   const [tasks, setTasks] = useState<ReviewTaskItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
 
+  useEffect(() => {
+    async function restoreSession() {
+      const existingToken = tokenStore.get();
+      if (!existingToken) {
+        setAuthChecking(false);
+        return;
+      }
+      try {
+        const user = await api.me();
+        setCurrentUser(user);
+      } catch {
+        tokenStore.clear();
+      } finally {
+        setAuthChecking(false);
+      }
+    }
+    void restoreSession();
+  }, []);
+
   const loadBootstrap = useCallback(async () => {
+    if (!currentUser) return;
+    setLoading(true);
     try {
-      const [h, mList] = await Promise.all([api.health(), api.listMatters()]);
+      const [h, mList, pList] = await Promise.all([
+        api.health(),
+        api.listMatters(),
+        api.listPlaybooks(),
+      ]);
       setHealth(h);
       setMatters(mList);
+      setPlaybooks(pList);
       setSelectedMatterId((prev) => {
         if (prev && mList.some((m) => m.id === prev)) return prev;
         return mList[0]?.id ?? null;
@@ -55,27 +93,29 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentUser]);
 
   const refreshMatterData = useCallback(async () => {
-    if (!selectedMatterId) return;
+    if (!currentUser || !selectedMatterId) return;
     try {
-      const [mList, docs, fList, tList, logs] = await Promise.all([
+      const [mList, docs, fList, tList, logs, pList] = await Promise.all([
         api.listMatters(),
         api.listDocuments(selectedMatterId),
         api.listFindings(selectedMatterId),
         api.listTasks(selectedMatterId),
         api.listAuditLogs(selectedMatterId),
+        api.listPlaybooks(),
       ]);
       setMatters(mList);
       setDocuments(docs);
       setFindings(fList);
       setTasks(tList);
       setAuditLogs(logs);
+      setPlaybooks(pList);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load matter workspace.');
     }
-  }, [selectedMatterId]);
+  }, [currentUser, selectedMatterId]);
 
   useEffect(() => {
     void loadBootstrap();
@@ -92,6 +132,30 @@ export default function App() {
     setActiveTab('documents');
   }
 
+  function handleSignOut() {
+    tokenStore.clear();
+    setCurrentUser(null);
+    setMatters([]);
+    setSelectedMatterId(null);
+    setDocuments([]);
+    setFindings([]);
+    setTasks([]);
+    setAuditLogs([]);
+  }
+
+  if (authChecking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-900 text-xs text-slate-300 gap-2">
+        <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
+        Verifying session...
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <AuthGate onAuthenticated={setCurrentUser} />;
+  }
+
   const activeMatter = matters.find((m) => m.id === selectedMatterId) ?? null;
 
   return (
@@ -101,6 +165,8 @@ export default function App() {
         selectedMatterId={selectedMatterId}
         onSelectMatter={setSelectedMatterId}
         onNewMatter={() => setModalOpen(true)}
+        onSignOut={handleSignOut}
+        currentUser={currentUser}
         health={health}
       />
 
@@ -117,21 +183,21 @@ export default function App() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
               <Scale className="h-7 w-7" />
             </div>
-            <h2 className="mt-4 text-lg font-semibold text-slate-900">
-              Welcome to AI Paralegal
-            </h2>
+            <h2 className="mt-4 text-lg font-semibold text-slate-900">Welcome to AI Paralegal</h2>
             <p className="mt-1.5 max-w-md text-xs leading-relaxed text-slate-500">
-              Create your first legal matter to ingest contracts and discovery records, run
-              clause-risk extraction, synthesize timelines and contradictions, and review
-              citation-grounded attorney drafts.
+              {currentUser.role === 'auditor'
+                ? 'No matters exist yet in the firm workspace.'
+                : 'Create your first legal matter to ingest contracts and discovery records, run playbook-guided redlines, synthesize timelines, and review citation-grounded drafts.'}
             </p>
-            <button
-              type="button"
-              onClick={() => setModalOpen(true)}
-              className="mt-5 rounded-lg bg-indigo-600 px-5 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500"
-            >
-              + Create First Legal Matter
-            </button>
+            {currentUser.role !== 'auditor' && (
+              <button
+                type="button"
+                onClick={() => setModalOpen(true)}
+                className="mt-5 rounded-lg bg-indigo-600 px-5 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500"
+              >
+                + Create First Legal Matter
+              </button>
+            )}
           </div>
         ) : (
           <>
@@ -152,13 +218,19 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  <h2 className="mt-1.5 text-lg font-bold text-slate-900">
-                    {activeMatter.title}
-                  </h2>
+                  <h2 className="mt-1.5 text-lg font-bold text-slate-900">{activeMatter.title}</h2>
                   <p className="text-xs text-slate-500">Client: {activeMatter.client_name}</p>
                 </div>
 
-                <div className="flex items-center gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setTeamModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    <Users className="h-3.5 w-3.5 text-indigo-600" />
+                    Team Access
+                  </button>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5">
                     <span className="text-slate-500">Docs:</span>{' '}
                     <strong className="text-slate-900">{activeMatter.stats.document_count}</strong>
@@ -218,6 +290,7 @@ export default function App() {
                 <DocumentsTab
                   matterId={activeMatter.id}
                   documents={documents}
+                  canWrite={currentUser.role !== 'auditor'}
                   onRefresh={refreshMatterData}
                 />
               )}
@@ -226,7 +299,10 @@ export default function App() {
                   matterId={activeMatter.id}
                   documents={documents}
                   findings={findings}
+                  playbooks={playbooks}
+                  currentUser={currentUser}
                   health={health}
+                  onNewPlaybook={() => setPlaybookModalOpen(true)}
                   onRefresh={refreshMatterData}
                 />
               )}
@@ -243,6 +319,7 @@ export default function App() {
                 <ReviewAuditTab
                   findings={findings}
                   auditLogs={auditLogs}
+                  currentUser={currentUser}
                   onRefresh={refreshMatterData}
                 />
               )}
@@ -255,6 +332,24 @@ export default function App() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onCreate={handleCreateMatter}
+      />
+
+      {activeMatter && (
+        <TeamAccessModal
+          open={teamModalOpen}
+          matterId={activeMatter.id}
+          matterTitle={activeMatter.title}
+          currentUser={currentUser}
+          onClose={() => setTeamModalOpen(false)}
+        />
+      )}
+
+      <PlaybookModal
+        open={playbookModalOpen}
+        onClose={() => setPlaybookModalOpen(false)}
+        onCreated={(pb) => {
+          setPlaybooks((prev) => [...prev, pb]);
+        }}
       />
     </div>
   );

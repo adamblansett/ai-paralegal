@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     embedding_provider: Literal["deterministic", "ollama", "gemini"] = "deterministic"
     embedding_dimensions: int = Field(default=384, ge=32, le=4096)
 
+    # Authentication & RBAC
+    auth_secret_key: str = "dev-insecure-secret-change-in-production-32bytes"
+    auth_token_expire_minutes: int = Field(default=480, ge=5, le=43200)
+    auth_auto_seed_demo_users: bool = True
+
+    # OCR / Scanned PDF Pipeline
+    ocr_backend: Literal["auto", "tesseract", "mock", "disabled"] = "auto"
+    ocr_min_chars_per_page: int = Field(default=20, ge=1, le=500)
+
     @property
     def is_postgres(self) -> bool:
         return self.database_url.startswith("postgresql")

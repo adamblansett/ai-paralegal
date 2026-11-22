@@ -11,6 +11,9 @@ class HealthResponse(BaseModel):
     supported_models: dict[str, list[str]]
     storage_backend: str
     task_execution_mode: str
+    auth_enabled: bool = True
+    ocr_backend: str = "auto"
+    tesseract_available: bool = False
     disclaimer: str
 
 

@@ -16,6 +16,7 @@ from app.llm.types import ContractReviewLLMOutput, LLMRequest
 from app.models.finding import ExtractedFinding
 from app.models.review_task import ReviewTask
 from app.services.audit import record_audit_log
+from app.services.playbooks import format_playbook_notes, get_rule_map, resolve_playbook
 from app.services.retrieval import load_matter_chunks
 
 
@@ -28,6 +29,7 @@ async def run_contract_review(
     document_ids: list[uuid.UUID] | None = None,
     clause_types: list[str] | None = None,
     playbook_notes: str | None = None,
+    playbook_id: uuid.UUID | None = None,
     provider: str | None = None,
     model: str | None = None,
     settings: Settings | None = None,
@@ -56,11 +58,23 @@ async def run_contract_review(
                 "Upload and index a contract first."
             )
 
+        playbook = await resolve_playbook(session, playbook_id)
+        rule_map = get_rule_map(playbook)
+        combined_playbook_notes = ""
+        if playbook is not None:
+            combined_playbook_notes = format_playbook_notes(playbook)
+        if playbook_notes and playbook_notes.strip():
+            combined_playbook_notes = (
+                f"{combined_playbook_notes}\n\nAdditional Notes:\n{playbook_notes.strip()}"
+                if combined_playbook_notes
+                else playbook_notes.strip()
+            )
+
         targets = clause_types or STANDARD_CLAUSE_TYPES
         template_name, system_prompt, user_prompt = build_contract_review_prompt(
             chunks,
             clause_types=targets,
-            playbook_notes=playbook_notes,
+            playbook_notes=combined_playbook_notes or None,
         )
         llm_request = LLMRequest(
             task_kind="contract_review",
@@ -69,7 +83,7 @@ async def run_contract_review(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             context_chunks=chunks,
-            metadata={"clause_types": targets},
+            metadata={"clause_types": targets, "playbook_rules": rule_map},
         )
         llm_response = await router.generate_structured(
             llm_request,
@@ -109,6 +123,13 @@ async def run_contract_review(
             if primary_doc_id is None and document_ids:
                 primary_doc_id = document_ids[0]
 
+            rule_entry = rule_map.get(item.category, {})
+            proposed_redline = item.proposed_redline or (
+                str(rule_entry.get("fallback_position"))
+                if item.is_non_standard and rule_entry.get("fallback_position")
+                else None
+            )
+
             finding = ExtractedFinding(
                 matter_id=matter_id,
                 document_id=primary_doc_id,
@@ -128,6 +149,9 @@ async def run_contract_review(
                     "is_non_standard": item.is_non_standard,
                     "provider": llm_response.provider,
                     "model_name": llm_response.model_name,
+                    "playbook_name": playbook.name if playbook else "Default Playbook",
+                    "standard_position": rule_entry.get("standard_position"),
+                    "proposed_redline": proposed_redline,
                 },
                 review_status="pending_review",
             )

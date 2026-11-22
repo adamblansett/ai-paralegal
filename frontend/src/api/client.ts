@@ -1,4 +1,5 @@
 import type {
+  AccessLevel,
   AuditLogEntry,
   DocumentChunkItem,
   DocumentItem,
@@ -8,24 +9,46 @@ import type {
   LLMProviderName,
   Matter,
   MatterCreateInput,
+  MatterMember,
+  Playbook,
+  PlaybookRule,
   ResearchQueryResponse,
   ReviewStatus,
   ReviewTaskItem,
   SearchResponse,
+  TokenResponse,
+  UserProfile,
+  UserRole,
 } from '../types/api';
 
 const API_BASE = '/api/v1';
+const TOKEN_STORAGE_KEY = 'ai_paralegal_token';
+
+export const tokenStore = {
+  get: (): string | null => window.localStorage.getItem(TOKEN_STORAGE_KEY),
+  set: (token: string): void => window.localStorage.setItem(TOKEN_STORAGE_KEY, token),
+  clear: (): void => window.localStorage.removeItem(TOKEN_STORAGE_KEY),
+};
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = tokenStore.get();
+  const headers: Record<string, string> = {
+    ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(init?.headers ?? {}),
-    },
     ...init,
+    headers: {
+      ...headers,
+      ...((init?.headers as Record<string, string> | undefined) ?? {}),
+    },
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      tokenStore.clear();
+    }
     let detail = `HTTP ${response.status}`;
     try {
       const payload = (await response.json()) as { detail?: string };
@@ -42,9 +65,34 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function authQuerySuffix(): string {
+  const token = tokenStore.get();
+  return token ? `&token=${encodeURIComponent(token)}` : '';
+}
+
 export const api = {
   health: () => apiRequest<HealthResponse>('/health'),
 
+  // Auth & RBAC
+  login: (email: string, password: string) =>
+    apiRequest<TokenResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  register: (payload: {
+    email: string;
+    full_name: string;
+    password: string;
+    role: UserRole;
+  }) =>
+    apiRequest<TokenResponse>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  me: () => apiRequest<UserProfile>('/auth/me'),
+  listUsers: () => apiRequest<UserProfile[]>('/auth/users'),
+
+  // Matters & Memberships
   listMatters: () => apiRequest<Matter[]>('/matters'),
   createMatter: (payload: MatterCreateInput) =>
     apiRequest<Matter>('/matters', {
@@ -53,7 +101,35 @@ export const api = {
     }),
   deleteMatter: (matterId: string) =>
     apiRequest<void>(`/matters/${matterId}`, { method: 'DELETE' }),
+  listMatterMembers: (matterId: string) =>
+    apiRequest<MatterMember[]>(`/matters/${matterId}/members`),
+  addMatterMember: (matterId: string, userId: string, accessLevel: AccessLevel) =>
+    apiRequest<MatterMember>(`/matters/${matterId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, access_level: accessLevel }),
+    }),
+  removeMatterMember: (matterId: string, userId: string) =>
+    apiRequest<void>(`/matters/${matterId}/members/${userId}`, {
+      method: 'DELETE',
+    }),
 
+  // Playbooks
+  listPlaybooks: () => apiRequest<Playbook[]>('/playbooks'),
+  createPlaybook: (payload: {
+    name: string;
+    practice_area: string;
+    description?: string;
+    is_default?: boolean;
+    rules: PlaybookRule[];
+  }) =>
+    apiRequest<Playbook>('/playbooks', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deletePlaybook: (playbookId: string) =>
+    apiRequest<void>(`/playbooks/${playbookId}`, { method: 'DELETE' }),
+
+  // Documents
   listDocuments: (matterId: string) =>
     apiRequest<DocumentItem[]>(`/matters/${matterId}/documents`),
   uploadDocument: (matterId: string, file: File, documentType = 'general') => {
@@ -74,11 +150,13 @@ export const api = {
   deleteDocument: (documentId: string) =>
     apiRequest<void>(`/documents/${documentId}`, { method: 'DELETE' }),
 
+  // Analyses & Drafting
   runContractReview: (
     matterId: string,
     payload: {
       document_ids?: string[];
       playbook_notes?: string;
+      playbook_id?: string;
       provider?: LLMProviderName;
       model?: string;
     }
@@ -146,6 +224,7 @@ export const api = {
     apiRequest<ReviewTaskItem[]>(`/matters/${matterId}/tasks`),
   getTask: (taskId: string) => apiRequest<ReviewTaskItem>(`/tasks/${taskId}`),
 
+  // Findings & Review Queue
   listFindings: (matterId: string, params?: Record<string, string>) => {
     const qs = params ? `?${new URLSearchParams(params).toString()}` : '';
     return apiRequest<ExtractedFinding[]>(`/matters/${matterId}/findings${qs}`);
@@ -154,7 +233,6 @@ export const api = {
     findingId: string,
     payload: {
       review_status: ReviewStatus;
-      reviewer_name: string;
       reviewer_notes?: string;
       edited_summary?: string;
     }
@@ -166,7 +244,6 @@ export const api = {
   batchReviewFindings: (payload: {
     finding_ids: string[];
     review_status: ReviewStatus;
-    reviewer_name: string;
     reviewer_notes?: string;
   }) =>
     apiRequest<{ updated_count: number; findings: ExtractedFinding[] }>(
@@ -181,7 +258,12 @@ export const api = {
     apiRequest<AuditLogEntry[]>(`/matters/${matterId}/audit-logs`),
 
   exportReviewTableUrl: (matterId: string, format: 'csv' | 'json' | 'markdown') =>
-    `${API_BASE}/matters/${matterId}/exports/review-table?format=${format}`,
+    `${API_BASE}/matters/${matterId}/exports/review-table?format=${format}${authQuerySuffix()}`,
   exportChronologyUrl: (matterId: string, format: 'csv' | 'json' | 'markdown') =>
-    `${API_BASE}/matters/${matterId}/exports/chronology?format=${format}`,
+    `${API_BASE}/matters/${matterId}/exports/chronology?format=${format}${authQuerySuffix()}`,
+  exportRedlineDocxUrl: (matterId: string) => {
+    const token = tokenStore.get();
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    return `${API_BASE}/matters/${matterId}/exports/redline.docx${qs}`;
+  },
 };

@@ -11,6 +11,8 @@ from typing import Any
 
 from pypdf import PdfReader
 
+from app.services.ocr import OCRService
+
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _LEGAL_HEADING_RE = re.compile(
     r"^(?:SECTION|ARTICLE|EXHIBIT|SCHEDULE|APPENDIX)\s+[0-9IVXLC]+(?:[.:]\s*.*)?$"
@@ -122,26 +124,79 @@ def _split_paragraphs_with_offsets(
     return segments, para_idx, current_heading
 
 
-def _parse_pdf(data: bytes) -> ParsedDocument:
+def _parse_pdf(data: bytes, ocr_service: OCRService | None = None) -> ParsedDocument:
+    ocr = ocr_service or OCRService(backend_mode="auto")
     reader = PdfReader(io.BytesIO(data))
     segments: list[ParsedSegment] = []
     para_idx = 1
     current_heading: str | None = None
     char_offset = 0
+    scanned_pages_detected: list[int] = []
+    ocr_pages: list[int] = []
+    ocr_warnings: list[str] = []
+    ocr_backend_used: str = ocr.backend_mode
 
     for page_num, page in enumerate(reader.pages, start=1):
         raw_page_text = page.extract_text() or ""
-        if not raw_page_text.strip():
+        if len(raw_page_text.strip()) >= ocr.min_chars_per_page:
+            page_segments, para_idx, current_heading = _split_paragraphs_with_offsets(
+                raw_page_text,
+                page_number=page_num,
+                starting_paragraph_index=para_idx,
+                base_char_offset=char_offset,
+                initial_heading=current_heading,
+            )
+            segments.extend(page_segments)
+            char_offset += len(raw_page_text) + 1
             continue
-        page_segments, para_idx, current_heading = _split_paragraphs_with_offsets(
-            raw_page_text,
-            page_number=page_num,
-            starting_paragraph_index=para_idx,
-            base_char_offset=char_offset,
-            initial_heading=current_heading,
-        )
-        segments.extend(page_segments)
-        char_offset += len(raw_page_text) + 1
+
+        scanned_pages_detected.append(page_num)
+        ocr_res = ocr.extract_pdf_page_text(page, page_num, data)
+        ocr_backend_used = ocr_res.backend
+        if ocr_res.applied and ocr_res.text.strip():
+            ocr_pages.append(page_num)
+            ocr_segments, para_idx, current_heading = _split_paragraphs_with_offsets(
+                ocr_res.text,
+                page_number=page_num,
+                starting_paragraph_index=para_idx,
+                base_char_offset=char_offset,
+                initial_heading=current_heading,
+            )
+            for seg in ocr_segments:
+                seg.metadata["source"] = "ocr"
+                seg.metadata["ocr_backend"] = ocr_res.backend
+            segments.extend(ocr_segments)
+            char_offset += len(ocr_res.text) + 1
+        else:
+            if ocr_res.warning:
+                ocr_warnings.append(ocr_res.warning)
+            if raw_page_text.strip():
+                page_segments, para_idx, current_heading = _split_paragraphs_with_offsets(
+                    raw_page_text,
+                    page_number=page_num,
+                    starting_paragraph_index=para_idx,
+                    base_char_offset=char_offset,
+                    initial_heading=current_heading,
+                )
+                segments.extend(page_segments)
+                char_offset += len(raw_page_text) + 1
+            else:
+                placeholder = f"[Scanned page {page_num} requires OCR — no embedded text layer]"
+                segments.append(
+                    ParsedSegment(
+                        text=placeholder,
+                        page_number=page_num,
+                        paragraph_index=para_idx,
+                        section_heading=current_heading,
+                        char_start=char_offset,
+                        char_end=char_offset + len(placeholder),
+                        metadata={
+                            "source": "scanned_unextracted",
+                            "ocr_warning": ocr_res.warning or "OCR unavailable",
+                        },
+                    )
+                )
+                para_idx += 1
 
     page_count = max(1, len(reader.pages))
     if not segments:
@@ -153,15 +208,25 @@ def _parse_pdf(data: bytes) -> ParsedDocument:
                 section_heading=None,
                 char_start=0,
                 char_end=0,
+                metadata={"source": "scanned_unextracted"},
             )
         )
     word_count = sum(len(seg.text.split()) for seg in segments)
+    ocr_required = len(scanned_pages_detected) > len(ocr_pages)
     return ParsedDocument(
         segments=segments,
         page_count=page_count,
         word_count=word_count,
         detected_document_type="general",
-        metadata={"parser": "pypdf"},
+        metadata={
+            "parser": "pypdf",
+            "ocr_applied": len(ocr_pages) > 0,
+            "ocr_required": ocr_required,
+            "ocr_backend": ocr_backend_used,
+            "ocr_pages": ocr_pages,
+            "scanned_pages_detected": scanned_pages_detected,
+            "ocr_warnings": ocr_warnings,
+        },
     )
 
 
@@ -415,12 +480,13 @@ def parse_document_bytes(
     *,
     content_type: str = "application/octet-stream",
     hinted_document_type: str | None = None,
+    ocr_service: OCRService | None = None,
 ) -> ParsedDocument:
     """Parse PDF, DOCX, TXT, MD, EML, or transcript files into provenance-rich segments."""
     ext = Path(filename).suffix.lower()
 
     if ext == ".pdf" or content_type == "application/pdf":
-        return _parse_pdf(data)
+        return _parse_pdf(data, ocr_service=ocr_service)
     if ext == ".docx" or "wordprocessingml" in content_type:
         return _parse_docx(data)
     if ext == ".eml" or content_type == "message/rfc822":

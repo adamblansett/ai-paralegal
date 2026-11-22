@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import {
   AlertOctagon,
+  BookOpen,
   Check,
+  Download,
   Flag,
   Loader2,
   Play,
+  Plus,
   ShieldAlert,
 } from 'lucide-react';
 import { api } from '../api/client';
@@ -13,8 +16,10 @@ import type {
   ExtractedFinding,
   HealthResponse,
   LLMProviderName,
+  Playbook,
   ReviewStatus,
   ReviewTaskItem,
+  UserProfile,
 } from '../types/api';
 import { CitationBadge } from './CitationBadge';
 
@@ -22,7 +27,10 @@ interface ContractReviewTabProps {
   matterId: string;
   documents: DocumentItem[];
   findings: ExtractedFinding[];
+  playbooks: Playbook[];
+  currentUser: UserProfile;
   health: HealthResponse | null;
+  onNewPlaybook: () => void;
   onRefresh: () => Promise<void>;
 }
 
@@ -38,10 +46,14 @@ export function ContractReviewTab({
   matterId,
   documents,
   findings,
+  playbooks,
+  currentUser,
   health,
+  onNewPlaybook,
   onRefresh,
 }: ContractReviewTabProps) {
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
   const [provider, setProvider] = useState<LLMProviderName | ''>('');
   const [model, setModel] = useState('');
   const [playbookNotes, setPlaybookNotes] = useState('');
@@ -49,6 +61,9 @@ export function ContractReviewTab({
   const [lastTask, setLastTask] = useState<ReviewTaskItem | null>(null);
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [error, setError] = useState<string | null>(null);
+
+  const canWrite = currentUser.role !== 'auditor';
+  const canApprove = currentUser.role === 'partner' || currentUser.role === 'associate';
 
   const indexedDocs = documents.filter((d) => d.ingestion_status === 'indexed');
   const contractFindings = findings.filter((f) =>
@@ -75,6 +90,7 @@ export function ContractReviewTab({
       const task = await api.runContractReview(matterId, {
         document_ids: selectedDocIds.length > 0 ? selectedDocIds : undefined,
         playbook_notes: playbookNotes.trim() || undefined,
+        playbook_id: selectedPlaybookId || undefined,
         provider: provider || undefined,
         model: model || undefined,
       });
@@ -91,7 +107,6 @@ export function ContractReviewTab({
     try {
       await api.reviewFinding(findingId, {
         review_status: status,
-        reviewer_name: 'Reviewing Attorney',
       });
       await onRefresh();
     } catch (err) {
@@ -188,7 +203,7 @@ export function ContractReviewTab({
 
             <button
               type="button"
-              disabled={running || indexedDocs.length === 0}
+              disabled={running || indexedDocs.length === 0 || !canWrite}
               onClick={() => void handleRunReview()}
               className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
             >
@@ -199,16 +214,50 @@ export function ContractReviewTab({
               )}
               {running ? 'Analyzing Contract...' : 'Run Contract Review'}
             </button>
+
+            <a
+              href={api.exportRedlineDocxUrl(matterId)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" />
+              Word Redline (.docx)
+            </a>
           </div>
         </div>
 
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1.5">
+            <BookOpen className="h-3.5 w-3.5 text-slate-500" />
+            <select
+              value={selectedPlaybookId}
+              onChange={(e) => setSelectedPlaybookId(e.target.value)}
+              aria-label="Contract Playbook"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700"
+            >
+              <option value="">Default Firm Playbook</option>
+              {playbooks.map((pb) => (
+                <option key={pb.id} value={pb.id}>
+                  {pb.name} ({pb.rules_json.length} rules)
+                </option>
+              ))}
+            </select>
+            {canApprove && (
+              <button
+                type="button"
+                onClick={onNewPlaybook}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Playbook
+              </button>
+            )}
+          </div>
           <input
             type="text"
             value={playbookNotes}
             onChange={(e) => setPlaybookNotes(e.target.value)}
             placeholder="Optional playbook instructions (e.g., Flag liability caps under 12 months fees or any client background IP assignment)"
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:outline-none"
+            className="flex-1 min-w-[240px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:outline-none"
           />
         </div>
 
@@ -323,8 +372,10 @@ export function ContractReviewTab({
                   </span>
                   <button
                     type="button"
+                    disabled={!canApprove}
+                    title={canApprove ? 'Approve finding' : 'Licensed attorney role required to approve'}
                     onClick={() => void quickReview(finding.id, 'approved')}
-                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium border ${
+                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium border disabled:opacity-40 ${
                       finding.review_status === 'approved'
                         ? 'border-emerald-500 bg-emerald-600 text-white'
                         : 'border-slate-200 bg-white text-slate-700 hover:bg-emerald-50'
@@ -335,8 +386,9 @@ export function ContractReviewTab({
                   </button>
                   <button
                     type="button"
+                    disabled={!canWrite}
                     onClick={() => void quickReview(finding.id, 'flagged')}
-                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium border ${
+                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium border disabled:opacity-40 ${
                       finding.review_status === 'flagged'
                         ? 'border-rose-500 bg-rose-600 text-white'
                         : 'border-slate-200 bg-white text-slate-700 hover:bg-rose-50'
@@ -351,6 +403,27 @@ export function ContractReviewTab({
               <p className="text-xs leading-relaxed text-slate-700">
                 {finding.edited_summary || finding.summary}
               </p>
+
+              {typeof finding.metadata_json?.proposed_redline === 'string' && (
+                <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 md:grid-cols-2">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-rose-700">
+                      Original Contract Language (Cited)
+                    </p>
+                    <p className="mt-1 rounded border border-rose-200 bg-rose-50/60 p-2 font-mono text-[11px] leading-relaxed text-rose-950 line-through">
+                      {finding.citations_json[0]?.quote || '[Missing protective clause]'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                      Proposed Playbook Fallback Redline
+                    </p>
+                    <p className="mt-1 rounded border border-emerald-200 bg-emerald-50/60 p-2 font-mono text-[11px] leading-relaxed text-emerald-950">
+                      {finding.metadata_json.proposed_redline}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {finding.recommended_action && (
                 <div className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">

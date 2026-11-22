@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { Briefcase, Plus, Scale, Search, ShieldCheck } from 'lucide-react';
-import type { HealthResponse, Matter } from '../types/api';
+import { Briefcase, LogOut, Plus, Scale, Search, ShieldCheck } from 'lucide-react';
+import type { HealthResponse, Matter, UserProfile } from '../types/api';
 
 interface MatterSidebarProps {
   matters: Matter[];
   selectedMatterId: string | null;
   onSelectMatter: (matterId: string) => void;
   onNewMatter: () => void;
+  onSignOut: () => void;
+  currentUser: UserProfile;
   health: HealthResponse | null;
 }
 
@@ -15,6 +17,8 @@ export function MatterSidebar({
   selectedMatterId,
   onSelectMatter,
   onNewMatter,
+  onSignOut,
+  currentUser,
   health,
 }: MatterSidebarProps) {
   const [search, setSearch] = useState('');
@@ -42,14 +46,16 @@ export function MatterSidebar({
               <p className="text-[11px] text-slate-400">Legal Ops & Evidence Review</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onNewMatter}
-            className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New
-          </button>
+          {currentUser.role !== 'auditor' && (
+            <button
+              type="button"
+              onClick={onNewMatter}
+              className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New
+            </button>
+          )}
         </div>
 
         <div className="relative mt-3.5">
@@ -117,21 +123,39 @@ export function MatterSidebar({
         )}
       </div>
 
-      <div className="border-t border-slate-800 px-4 py-3 text-[11px] text-slate-400">
-        <div className="flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-            Router: <strong className="text-slate-200">{health?.default_provider ?? '...'}</strong>
-          </span>
-          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
-            {health?.database === 'ok' ? 'DB Online' : 'Connecting'}
-          </span>
+      <div className="border-t border-slate-800 px-4 py-3 text-[11px] text-slate-400 space-y-2.5">
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-800/70 px-2.5 py-2">
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-slate-100">{currentUser.full_name}</p>
+            <p className="truncate text-[10px] uppercase tracking-wider text-indigo-300">
+              {currentUser.role}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onSignOut}
+            title="Sign out"
+            className="rounded border border-slate-700 p-1.5 text-slate-300 hover:bg-slate-700 hover:text-white"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
         </div>
-        {health && (
-          <p className="mt-1 truncate text-[10px] text-slate-500">
-            Fallbacks: {health.fallback_providers.join(' → ')}
-          </p>
-        )}
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+              Router: <strong className="text-slate-200">{health?.default_provider ?? '...'}</strong>
+            </span>
+            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
+              {health?.database === 'ok' ? 'DB Online' : 'Connecting'}
+            </span>
+          </div>
+          {health && (
+            <p className="mt-1 truncate text-[10px] text-slate-500">
+              OCR: {health.ocr_backend} ({health.tesseract_available ? 'tesseract ready' : 'fallback'})
+            </p>
+          )}
+        </div>
       </div>
     </aside>
   );

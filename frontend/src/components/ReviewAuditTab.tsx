@@ -10,12 +10,13 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { api } from '../api/client';
-import type { AuditLogEntry, ExtractedFinding, ReviewStatus } from '../types/api';
+import type { AuditLogEntry, ExtractedFinding, ReviewStatus, UserProfile } from '../types/api';
 import { CitationBadge } from './CitationBadge';
 
 interface ReviewAuditTabProps {
   findings: ExtractedFinding[];
   auditLogs: AuditLogEntry[];
+  currentUser: UserProfile;
   onRefresh: () => Promise<void>;
 }
 
@@ -28,17 +29,20 @@ const REVIEW_BADGE: Record<ReviewStatus, string> = {
 export function ReviewAuditTab({
   findings,
   auditLogs,
+  currentUser,
   onRefresh,
 }: ReviewAuditTabProps) {
   const [view, setView] = useState<'queue' | 'audit'>('queue');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [reviewerName, setReviewerName] = useState('A. Vance, Esq.');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editSummary, setEditSummary] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [expandedAuditId, setExpandedAuditId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const canWrite = currentUser.role !== 'auditor';
+  const canApprove = currentUser.role === 'partner' || currentUser.role === 'associate';
 
   const filteredFindings = findings.filter((f) => {
     if (statusFilter === 'all') return true;
@@ -61,7 +65,6 @@ export function ReviewAuditTab({
     try {
       await api.reviewFinding(finding.id, {
         review_status: status,
-        reviewer_name: reviewerName.trim() || 'Reviewing Attorney',
         reviewer_notes: withEdits ? editNotes : finding.reviewer_notes ?? undefined,
         edited_summary: withEdits && editSummary.trim() ? editSummary : undefined,
       });
@@ -79,7 +82,6 @@ export function ReviewAuditTab({
       await api.batchReviewFindings({
         finding_ids: selectedIds,
         review_status: status,
-        reviewer_name: reviewerName.trim() || 'Reviewing Attorney',
         reviewer_notes: `Batch ${status} via Attorney Review Queue`,
       });
       setSelectedIds([]);
@@ -127,13 +129,10 @@ export function ReviewAuditTab({
         </div>
 
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500">Reviewer:</span>
-          <input
-            type="text"
-            value={reviewerName}
-            onChange={(e) => setReviewerName(e.target.value)}
-            className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-800 focus:border-indigo-500 focus:outline-none"
-          />
+          <span className="text-slate-500">Authenticated Reviewer:</span>
+          <span className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-900">
+            {currentUser.full_name} ({currentUser.role})
+          </span>
         </div>
       </div>
 
@@ -171,15 +170,17 @@ export function ReviewAuditTab({
                 </span>
                 <button
                   type="button"
+                  disabled={!canApprove}
                   onClick={() => void handleBatch('approved')}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
                 >
                   Batch Approve
                 </button>
                 <button
                   type="button"
+                  disabled={!canWrite}
                   onClick={() => void handleBatch('flagged')}
-                  className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500"
+                  className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-40"
                 >
                   Batch Flag
                 </button>
@@ -235,6 +236,7 @@ export function ReviewAuditTab({
                       <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
+                          disabled={!canWrite}
                           onClick={() => {
                             if (isEditing) {
                               setEditingId(null);
@@ -244,28 +246,35 @@ export function ReviewAuditTab({
                               setEditNotes(finding.reviewer_notes || '');
                             }
                           }}
-                          className="inline-flex items-center gap-1 rounded border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                          className="inline-flex items-center gap-1 rounded border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                         >
                           <Edit3 className="h-3 w-3" />
                           Edit
                         </button>
                         <button
                           type="button"
+                          disabled={!canApprove}
+                          title={
+                            canApprove
+                              ? 'Approve finding'
+                              : 'Licensed attorney role (partner/associate) required'
+                          }
                           onClick={() => void handleReview(finding, 'approved')}
-                          className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+                          className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-40"
                         >
                           <Check className="h-3.5 w-3.5" />
                           Approve
                         </button>
                         <button
                           type="button"
+                          disabled={!canWrite}
                           onClick={() => void handleReview(finding, 'flagged')}
-                          className="inline-flex items-center gap-1 rounded border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                          className="inline-flex items-center gap-1 rounded border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-800 hover:bg-rose-100 disabled:opacity-40"
                         >
                           <Flag className="h-3.5 w-3.5" />
                           Flag
                         </button>
-                        {finding.review_status !== 'pending_review' && (
+                        {finding.review_status !== 'pending_review' && canWrite && (
                           <button
                             type="button"
                             onClick={() => void handleReview(finding, 'pending_review')}
@@ -313,15 +322,17 @@ export function ReviewAuditTab({
                           </button>
                           <button
                             type="button"
+                            disabled={!canApprove}
                             onClick={() => void handleReview(finding, 'approved', true)}
-                            className="rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                            className="rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
                           >
                             Save &amp; Approve
                           </button>
                           <button
                             type="button"
+                            disabled={!canWrite}
                             onClick={() => void handleReview(finding, 'flagged', true)}
-                            className="rounded bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-500"
+                            className="rounded bg-rose-600 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-40"
                           >
                             Save &amp; Flag
                           </button>

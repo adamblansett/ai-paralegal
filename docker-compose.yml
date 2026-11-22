@@ -52,6 +52,11 @@ services:
       GEMINI_DEFAULT_MODEL: ${GEMINI_DEFAULT_MODEL:-gemini-2.5-flash}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-deterministic}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-384}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-dev-insecure-secret-change-in-production-32bytes}
+      AUTH_TOKEN_EXPIRE_MINUTES: ${AUTH_TOKEN_EXPIRE_MINUTES:-480}
+      AUTH_AUTO_SEED_DEMO_USERS: ${AUTH_AUTO_SEED_DEMO_USERS:-true}
+      OCR_BACKEND: ${OCR_BACKEND:-auto}
+      OCR_MIN_CHARS_PER_PAGE: ${OCR_MIN_CHARS_PER_PAGE:-20}
     ports:
       - "8000:8000"
     volumes:
@@ -91,6 +96,9 @@ services:
       GEMINI_DEFAULT_MODEL: ${GEMINI_DEFAULT_MODEL:-gemini-2.5-flash}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-deterministic}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-384}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-dev-insecure-secret-change-in-production-32bytes}
+      OCR_BACKEND: ${OCR_BACKEND:-auto}
+      OCR_MIN_CHARS_PER_PAGE: ${OCR_MIN_CHARS_PER_PAGE:-20}
     volumes:
       - storage_data:/data/storage
     depends_on:

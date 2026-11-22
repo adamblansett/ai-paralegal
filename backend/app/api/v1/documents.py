@@ -14,12 +14,21 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_app_settings, get_db, get_embeddings, get_storage
+from app.api.deps import (
+    format_actor_id,
+    get_app_settings,
+    get_current_user,
+    get_db,
+    get_embeddings,
+    get_storage,
+    require_document_access,
+    require_matter_access,
+)
 from app.core.config import Settings
 from app.llm.embeddings import EmbeddingService
 from app.models.document import Document, DocumentChunk
-from app.models.matter import Matter
 from app.models.review_task import ReviewTask
+from app.models.user import User
 from app.schemas.document import DocumentChunkRead, DocumentRead, DocumentUploadResponse
 from app.services.ingestion import upload_document
 from app.storage.base import StorageBackend
@@ -38,15 +47,14 @@ async def upload_matter_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     document_type: str = Form(default="general"),
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_app_settings),
     storage: StorageBackend = Depends(get_storage),
     embeddings: EmbeddingService = Depends(get_embeddings),
 ) -> DocumentUploadResponse:
     """Upload a document to a matter and trigger parsing, chunking, and embedding."""
-    matter = await session.get(Matter, matter_id)
-    if matter is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matter not found.")
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=True)
 
     raw_bytes = await file.read()
     if not raw_bytes:
@@ -63,6 +71,7 @@ async def upload_matter_document(
         content_type=file.content_type or "application/octet-stream",
         data=raw_bytes,
         document_type=document_type,
+        actor_id=format_actor_id(current_user),
     )
 
     await dispatch_ingestion(
@@ -85,12 +94,11 @@ async def upload_matter_document(
 @router.get("/matters/{matter_id}/documents", response_model=list[DocumentRead])
 async def list_matter_documents(
     matter_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[DocumentRead]:
     """List documents uploaded to a matter."""
-    matter = await session.get(Matter, matter_id)
-    if matter is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matter not found.")
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=False)
     stmt = (
         select(Document).where(Document.matter_id == matter_id).order_by(Document.created_at.desc())
     )
@@ -101,24 +109,26 @@ async def list_matter_documents(
 @router.get("/documents/{document_id}", response_model=DocumentRead)
 async def get_document(
     document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentRead:
     """Get document metadata and ingestion status."""
-    doc = await session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    doc = await require_document_access(
+        session, document_id=document_id, user=current_user, write=False
+    )
     return DocumentRead.model_validate(doc)
 
 
 @router.get("/documents/{document_id}/chunks", response_model=list[DocumentChunkRead])
 async def list_document_chunks(
     document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[DocumentChunkRead]:
     """Inspect provenance-preserving parsed chunks for a document."""
-    doc = await session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    await require_document_access(
+        session, document_id=document_id, user=current_user, write=False
+    )
     stmt = (
         select(DocumentChunk)
         .where(DocumentChunk.document_id == document_id)
@@ -132,15 +142,16 @@ async def list_document_chunks(
 async def reprocess_document(
     document_id: uuid.UUID,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_app_settings),
     storage: StorageBackend = Depends(get_storage),
     embeddings: EmbeddingService = Depends(get_embeddings),
 ) -> DocumentUploadResponse:
     """Re-run parsing, chunking, and embedding on an existing document."""
-    doc = await session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    doc = await require_document_access(
+        session, document_id=document_id, user=current_user, write=True
+    )
 
     task = ReviewTask(
         matter_id=doc.matter_id,
@@ -173,13 +184,14 @@ async def reprocess_document(
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ) -> Response:
     """Delete a document, its stored bytes, and its indexed chunks."""
-    doc = await session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    doc = await require_document_access(
+        session, document_id=document_id, user=current_user, write=True
+    )
     storage_key = doc.storage_key
     await session.delete(doc)
     await session.commit()

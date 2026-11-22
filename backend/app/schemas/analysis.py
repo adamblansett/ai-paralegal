@@ -11,6 +11,7 @@ class ContractReviewRequest(BaseModel):
     document_ids: list[uuid.UUID] | None = None
     clause_types: list[str] | None = None
     playbook_notes: str | None = None
+    playbook_id: uuid.UUID | None = None
     provider: Literal["mock", "ollama", "gemini"] | None = None
     model: str | None = None
 
