@@ -2,23 +2,32 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
     format_actor_id,
+    get_app_settings,
     get_current_user,
     get_db,
     require_matter_access,
     require_roles,
 )
+from app.core.config import Settings
 from app.models.document import Document
 from app.models.finding import ExtractedFinding
 from app.models.matter import Matter
 from app.models.user import MatterMembership, User
 from app.schemas.auth import MatterMemberAdd, MatterMemberRead
-from app.schemas.matter import MatterCreate, MatterRead, MatterStats, MatterUpdate
+from app.schemas.matter import (
+    LegalHoldUpdate,
+    MatterCreate,
+    MatterRead,
+    MatterStats,
+    MatterUpdate,
+)
 from app.services.audit import record_audit_log
+from app.services.integrations import dispatch_webhooks
 
 router = APIRouter(prefix="/matters", tags=["matters"])
 
@@ -121,12 +130,14 @@ async def create_matter(
         )
 
     matter = Matter(
+        organization_id=current_user.organization_id,
         matter_number=matter_number,
         title=payload.title.strip(),
         client_name=payload.client_name.strip(),
         practice_area=payload.practice_area.strip(),
         jurisdiction=payload.jurisdiction.strip() if payload.jurisdiction else None,
         description=payload.description,
+        retention_days=payload.retention_days,
         metadata_json=payload.metadata_json,
     )
     session.add(matter)
@@ -162,8 +173,13 @@ async def list_matters(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[MatterRead]:
-    """List matters visible to the authenticated user based on role and memberships."""
+    """List matters visible to the authenticated user based on tenant, role, and memberships."""
     stmt = select(Matter).order_by(Matter.updated_at.desc())
+    if current_user.organization_id is not None:
+        stmt = stmt.where(
+            (Matter.organization_id == current_user.organization_id)
+            | (Matter.organization_id.is_(None))
+        )
     if current_user.role not in {"partner", "auditor"}:
         stmt = stmt.join(
             MatterMembership,
@@ -225,14 +241,74 @@ async def update_matter(
     return _to_matter_read(matter, stats_map[matter.id])
 
 
+@router.post("/{matter_id}/legal-hold", response_model=MatterRead)
+async def set_matter_legal_hold(
+    matter_id: uuid.UUID,
+    payload: LegalHoldUpdate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+) -> MatterRead:
+    """Activate or release litigation legal hold across a matter and its documents."""
+    matter = await _require_matter_manager(session, matter_id=matter_id, user=current_user)
+    prev_state = "active" if matter.legal_hold_active else "inactive"
+    new_state = "active" if payload.active else "inactive"
+    actor = format_actor_id(current_user)
+
+    matter.legal_hold_active = payload.active
+    matter.legal_hold_reason = payload.reason.strip() if payload.reason else None
+    matter.legal_hold_set_at = datetime.now(UTC)
+    matter.legal_hold_set_by = actor
+
+    await session.execute(
+        update(Document)
+        .where(Document.matter_id == matter_id)
+        .values(legal_hold_active=payload.active)
+    )
+    await record_audit_log(
+        session,
+        matter_id=matter.id,
+        action="legal_hold_updated",
+        actor_type="human",
+        actor_id=actor,
+        previous_state=prev_state,
+        new_state=new_state,
+        notes=matter.legal_hold_reason or f"Litigation legal hold {new_state} on {matter.title}.",
+    )
+    await session.commit()
+    await session.refresh(matter)
+
+    await dispatch_webhooks(
+        session,
+        organization_id=matter.organization_id,
+        matter_id=matter.id,
+        event_type="legal_hold.changed",
+        payload={
+            "matter_id": str(matter.id),
+            "matter_title": matter.title,
+            "legal_hold_active": matter.legal_hold_active,
+            "summary": f"Legal hold set to {new_state} by {current_user.full_name}",
+        },
+        settings=settings,
+    )
+
+    stats_map = await _compute_matter_stats(session, [matter.id])
+    return _to_matter_read(matter, stats_map[matter.id])
+
+
 @router.delete("/{matter_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_matter(
     matter_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Delete a matter and its cascading records (partner or owner required)."""
+    """Delete a matter and its cascading records (blocked while legal hold is active)."""
     matter = await _require_matter_manager(session, matter_id=matter_id, user=current_user)
+    if matter.legal_hold_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete matter while litigation legal hold is active.",
+        )
     await session.delete(matter)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

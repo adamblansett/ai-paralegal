@@ -36,6 +36,8 @@ class DocumentRead(BaseModel):
     privilege_reason: str | None = None
     pii_detected_count: int = 0
     pii_summary_json: dict[str, Any] = Field(default_factory=dict)
+    legal_hold_active: bool = False
+    retention_until: datetime | None = None
     metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime

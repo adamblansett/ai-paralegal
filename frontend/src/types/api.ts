@@ -90,6 +90,7 @@ export interface MatterStats {
 
 export interface Matter {
   id: string;
+  organization_id?: string | null;
   matter_number: string;
   title: string;
   client_name: string;
@@ -97,6 +98,11 @@ export interface Matter {
   jurisdiction: string | null;
   description: string | null;
   status: string;
+  legal_hold_active?: boolean;
+  legal_hold_reason?: string | null;
+  legal_hold_set_at?: string | null;
+  legal_hold_set_by?: string | null;
+  retention_days?: number | null;
   metadata_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -133,6 +139,8 @@ export interface DocumentItem {
   privilege_reason?: string | null;
   pii_detected_count?: number;
   pii_summary_json?: Record<string, number>;
+  legal_hold_active?: boolean;
+  retention_until?: string | null;
   metadata_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -345,5 +353,34 @@ export interface AuditLogEntry {
   previous_state: string | null;
   new_state: string | null;
   notes: string | null;
+  sequence_number?: number;
+  previous_hash?: string | null;
+  entry_hash?: string | null;
   created_at: string;
+}
+
+export interface AuditChainVerification {
+  matter_id: string;
+  total_entries: number;
+  verified: boolean;
+  broken_at_sequence: number | null;
+  latest_hash: string | null;
+  detail: string;
+}
+
+export interface DMSProviderInfo {
+  provider: string;
+  display_name: string;
+  configured: boolean;
+  description: string;
+}
+
+export interface DMSFileItem {
+  external_id: string;
+  name: string;
+  content_type: string;
+  document_type: string;
+  size_bytes: number;
+  modified_at: string;
+  source_uri: string;
 }

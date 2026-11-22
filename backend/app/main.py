@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.metrics import prometheus_metrics_endpoint
 from app.api.v1.router import api_v1_router
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_settings, validate_production_security
 from app.core.logging import configure_logging
 from app.core.middleware import SecurityAndObservabilityMiddleware
 from app.core.rate_limit import SlidingWindowRateLimiter
@@ -37,6 +37,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings_override: Settings | None = None) -> FastAPI:
     """Construct and configure the AI Paralegal FastAPI application."""
     cfg = settings_override or get_settings()
+    validate_production_security(cfg)
 
     app = FastAPI(
         title=cfg.app_name,

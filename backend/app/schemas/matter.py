@@ -12,6 +12,7 @@ class MatterCreate(BaseModel):
     practice_area: str = Field(default="Corporate", max_length=120)
     jurisdiction: str | None = Field(default=None, max_length=120)
     description: str | None = None
+    retention_days: int | None = Field(default=None, ge=1, le=36500)
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -21,7 +22,13 @@ class MatterUpdate(BaseModel):
     practice_area: str | None = Field(default=None, max_length=120)
     jurisdiction: str | None = Field(default=None, max_length=120)
     description: str | None = None
+    retention_days: int | None = Field(default=None, ge=1, le=36500)
     status: Literal["active", "archived", "closed"] | None = None
+
+
+class LegalHoldUpdate(BaseModel):
+    active: bool
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class MatterStats(BaseModel):
@@ -37,6 +44,7 @@ class MatterRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    organization_id: uuid.UUID | None = None
     matter_number: str
     title: str
     client_name: str
@@ -44,6 +52,11 @@ class MatterRead(BaseModel):
     jurisdiction: str | None
     description: str | None
     status: str
+    legal_hold_active: bool = False
+    legal_hold_reason: str | None = None
+    legal_hold_set_at: datetime | None = None
+    legal_hold_set_by: str | None = None
+    retention_days: int | None = None
     metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime

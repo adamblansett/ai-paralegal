@@ -13,6 +13,10 @@ class UserRegister(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
     role: UserRole = "associate"
+    organization_slug: str | None = Field(
+        default=None, min_length=2, max_length=64, pattern=r"^[a-z0-9-]+$"
+    )
+    organization_name: str | None = Field(default=None, min_length=2, max_length=255)
 
 
 class UserLogin(BaseModel):
@@ -24,6 +28,7 @@ class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    organization_id: uuid.UUID | None = None
     email: str
     full_name: str
     role: str

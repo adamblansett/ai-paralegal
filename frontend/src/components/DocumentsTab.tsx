@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import {
   BookOpen,
+  CloudDownload,
   Download,
   Eye,
   FileText,
+  FolderGit2,
   Loader2,
   RefreshCw,
   Shield,
@@ -13,12 +15,19 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { api } from '../api/client';
-import type { DocumentChunkItem, DocumentItem, PrivilegeStatus } from '../types/api';
+import type {
+  DMSFileItem,
+  DMSProviderInfo,
+  DocumentChunkItem,
+  DocumentItem,
+  PrivilegeStatus,
+} from '../types/api';
 
 interface DocumentsTabProps {
   matterId: string;
   documents: DocumentItem[];
   canWrite?: boolean;
+  legalHoldActive?: boolean;
   onOpenDocument?: (doc: DocumentItem) => void;
   onRefresh: () => Promise<void>;
 }
@@ -42,6 +51,7 @@ export function DocumentsTab({
   matterId,
   documents,
   canWrite = true,
+  legalHoldActive = false,
   onOpenDocument,
   onRefresh,
 }: DocumentsTabProps) {
@@ -57,6 +67,12 @@ export function DocumentsTab({
   const [batesPrefix, setBatesPrefix] = useState('PROD');
   const [batesStart, setBatesStart] = useState(1);
   const [stamping, setStamping] = useState(false);
+
+  const [dmsOpen, setDmsOpen] = useState(false);
+  const [dmsProviders, setDmsProviders] = useState<DMSProviderInfo[]>([]);
+  const [dmsFiles, setDmsFiles] = useState<DMSFileItem[]>([]);
+  const [loadingDms, setLoadingDms] = useState(false);
+  const [importingFileId, setImportingFileId] = useState<string | null>(null);
 
   const hasInProgress = documents.some(
     (d) => d.ingestion_status === 'pending' || d.ingestion_status === 'processing'
@@ -164,6 +180,39 @@ export function DocumentsTab({
     }
   }
 
+  async function handleToggleDms() {
+    const next = !dmsOpen;
+    setDmsOpen(next);
+    if (!next) return;
+    setLoadingDms(true);
+    setError(null);
+    try {
+      const [provs, files] = await Promise.all([
+        api.listDMSProviders(),
+        api.listDMSFiles('mock_dms'),
+      ]);
+      setDmsProviders(provs);
+      setDmsFiles(files);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load DMS connectors.');
+    } finally {
+      setLoadingDms(false);
+    }
+  }
+
+  async function handleImportFromDms(item: DMSFileItem) {
+    setImportingFileId(item.external_id);
+    setError(null);
+    try {
+      await api.importDMSFile(matterId, 'mock_dms', item.external_id, item.document_type);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'DMS import failed.');
+    } finally {
+      setImportingFileId(null);
+    }
+  }
+
   const privilegedCount = documents.filter(
     (d) => d.privilege_status && d.privilege_status !== 'none'
   ).length;
@@ -241,9 +290,84 @@ export function DocumentsTab({
               <UploadCloud className="h-4 w-4" />
               {uploading ? 'Uploading...' : canWrite ? 'Select Files' : 'Read-Only'}
             </button>
+
+            <button
+              type="button"
+              onClick={() => void handleToggleDms()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <FolderGit2 className="h-4 w-4 text-indigo-600" />
+              Import from DMS
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Collapsible DMS Connector Drawer */}
+      {dmsOpen && (
+        <div className="rounded-xl border border-indigo-200 bg-white p-5 shadow-sm space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-semibold text-slate-900">
+                Enterprise DMS &amp; Legal Vault Connectors
+              </h4>
+              <p className="text-xs text-slate-500">
+                Import contracts and discovery emails directly with full audit trail provenance.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {dmsProviders.map((prov) => (
+                <span
+                  key={prov.provider}
+                  className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${
+                    prov.configured
+                      ? 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {prov.display_name} {prov.configured ? '✓' : '(Env Config Required)'}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {loadingDms ? (
+            <div className="flex items-center gap-2 py-4 text-xs text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+              Listing files from Built-In Legal Fixture Vault...
+            </div>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {dmsFiles.map((item) => (
+                <div
+                  key={item.external_id}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-900">{item.name}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {item.document_type} • {(item.size_bytes / 1024).toFixed(1)} KB
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!canWrite || importingFileId === item.external_id}
+                    onClick={() => void handleImportFromDms(item)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    {importingFileId === item.external_id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <CloudDownload className="h-3 w-3" />
+                    )}
+                    Import
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Discovery Production Bar: Bates Stamping & Privilege Log */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-5 py-3.5 shadow-sm">
@@ -460,9 +584,14 @@ export function DocumentsTab({
                               </button>
                               <button
                                 type="button"
+                                disabled={Boolean(doc.legal_hold_active || legalHoldActive)}
                                 onClick={() => void handleDelete(doc.id)}
-                                title="Delete document"
-                                className="rounded border border-rose-200 p-1 text-rose-600 hover:bg-rose-50"
+                                title={
+                                  doc.legal_hold_active || legalHoldActive
+                                    ? 'Deletion locked under active Litigation Legal Hold'
+                                    : 'Delete document'
+                                }
+                                className="rounded border border-rose-200 p-1 text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>

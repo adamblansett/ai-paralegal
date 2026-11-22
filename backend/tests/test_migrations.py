@@ -21,6 +21,8 @@ def test_alembic_upgrade_head_creates_all_core_tables(tmp_path: Path) -> None:
         inspector = inspect(sync_engine)
         tables = set(inspector.get_table_names())
         doc_columns = {col["name"] for col in inspector.get_columns("documents")}
+        matter_columns = {col["name"] for col in inspector.get_columns("matters")}
+        audit_columns = {col["name"] for col in inspector.get_columns("audit_logs")}
     finally:
         sync_engine.dispose()
 
@@ -36,6 +38,8 @@ def test_alembic_upgrade_head_creates_all_core_tables(tmp_path: Path) -> None:
         "playbooks",
         "refresh_tokens",
         "revoked_tokens",
+        "organizations",
+        "webhook_subscriptions",
     }
     assert expected.issubset(tables)
     assert {
@@ -45,4 +49,8 @@ def test_alembic_upgrade_head_creates_all_core_tables(tmp_path: Path) -> None:
         "privilege_reason",
         "pii_detected_count",
         "pii_summary_json",
+        "legal_hold_active",
+        "retention_until",
     }.issubset(doc_columns)
+    assert {"organization_id", "legal_hold_active", "retention_days"}.issubset(matter_columns)
+    assert {"sequence_number", "previous_hash", "entry_hash"}.issubset(audit_columns)

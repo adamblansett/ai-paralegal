@@ -147,9 +147,9 @@ async def batch_review_findings(
             status_code=status.HTTP_404_NOT_FOUND, detail="No matching findings found."
         )
 
-    for finding in findings:
+    for mid in {f.matter_id for f in findings}:
         await require_matter_access(
-            session, matter_id=finding.matter_id, user=current_user, write=True
+            session, matter_id=mid, user=current_user, write=True
         )
 
     now = datetime.now(UTC)

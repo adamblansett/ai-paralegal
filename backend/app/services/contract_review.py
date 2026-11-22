@@ -25,6 +25,7 @@ from app.schemas.analysis import (
 )
 from app.services.audit import record_audit_log
 from app.services.events import event_bus
+from app.services.integrations import dispatch_webhooks
 from app.services.playbooks import format_playbook_notes, get_rule_map, resolve_playbook
 from app.services.retrieval import load_matter_chunks
 
@@ -264,6 +265,26 @@ async def run_contract_review(
                 "finding_count": len(created_finding_ids),
             },
         )
+        if any_escalated:
+            try:
+                matter_obj = await session.get(Matter, matter_id)
+                await dispatch_webhooks(
+                    session,
+                    organization_id=matter_obj.organization_id if matter_obj else None,
+                    matter_id=matter_id,
+                    event_type="finding.escalated",
+                    payload={
+                        "matter_id": str(matter_id),
+                        "matter_title": matter_obj.title if matter_obj else str(matter_id),
+                        "task_id": str(task.id),
+                        "overall_risk_level": output.overall_risk_level,
+                        "finding_count": len(created_finding_ids),
+                        "summary": output.executive_summary,
+                    },
+                    settings=cfg,
+                )
+            except Exception:
+                pass
         return task
     except Exception as exc:
         await session.rollback()

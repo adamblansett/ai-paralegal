@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.security import hash_password
+from app.models.organization import Organization
 from app.models.playbook import Playbook
 from app.models.user import User
 from app.services.playbooks import DEFAULT_SAAS_MSA_RULES
@@ -13,6 +14,30 @@ DEMO_USERS: list[tuple[str, str, str, str]] = [
     ("paralegal@firm.example.com", "Maya Lin (Paralegal)", "paralegal", "ParalegalDemo2026!"),
     ("auditor@firm.example.com", "Compliance Auditor", "auditor", "ParalegalDemo2026!"),
 ]
+
+
+async def ensure_default_organization(
+    session: AsyncSession, settings: Settings | None = None
+) -> Organization:
+    """Idempotently ensure the default law-firm organization tenant exists."""
+    cfg = settings or get_settings()
+    slug = cfg.default_organization_slug.strip().lower()
+    existing = (
+        await session.execute(select(Organization).where(Organization.slug == slug))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    org = Organization(
+        slug=slug,
+        name=cfg.default_organization_name,
+        retention_days=2555,
+        is_active=True,
+    )
+    session.add(org)
+    await session.commit()
+    await session.refresh(org)
+    return org
 
 
 async def ensure_default_playbook(session: AsyncSession) -> Playbook:
@@ -50,13 +75,17 @@ async def ensure_default_playbook(session: AsyncSession) -> Playbook:
 
 
 async def ensure_demo_users(
-    session: AsyncSession, settings: Settings | None = None
+    session: AsyncSession,
+    settings: Settings | None = None,
+    *,
+    default_org: Organization | None = None,
 ) -> list[User]:
     """Idempotently seed demo firm roles when `AUTH_AUTO_SEED_DEMO_USERS=true`."""
     cfg = settings or get_settings()
     if not cfg.auth_auto_seed_demo_users:
         return []
 
+    org = default_org or await ensure_default_organization(session, cfg)
     created_or_existing: list[User] = []
     dirty = False
     for email, full_name, role, password in DEMO_USERS:
@@ -64,9 +93,13 @@ async def ensure_demo_users(
             await session.execute(select(User).where(User.email == email))
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.organization_id is None:
+                existing.organization_id = org.id
+                dirty = True
             created_or_existing.append(existing)
             continue
         user = User(
+            organization_id=org.id,
             email=email,
             full_name=full_name,
             role=role,
@@ -83,6 +116,7 @@ async def ensure_demo_users(
 
 
 async def seed_defaults(session: AsyncSession, settings: Settings | None = None) -> None:
-    """Seed default playbook and demo RBAC accounts."""
+    """Seed default organization tenant, baseline playbook, and demo RBAC accounts."""
+    org = await ensure_default_organization(session, settings)
     await ensure_default_playbook(session)
-    await ensure_demo_users(session, settings)
+    await ensure_demo_users(session, settings, default_org=org)

@@ -34,4 +34,7 @@ python -m evals.runner --probe-live --markdown
 
 # Compare specific Ollama & Gemini models explicitly:
 python -m evals.runner --compare "mock:default,ollama:llama-3.1-8b-instruct,ollama:qwen-2.5-7b-instruct,ollama:mistral-nemo-12b,gemini:gemini-2.5-flash" --markdown --output scorecard.json
+
+# Include attorney-approved regression feedback exported from a matter:
+python -m evals.runner --provider mock --merge-feedback matter_eval_feedback.json --markdown
 ```

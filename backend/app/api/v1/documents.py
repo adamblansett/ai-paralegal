@@ -209,6 +209,39 @@ async def get_document_content(
     )
 
 
+@router.get("/documents/{document_id}/download-url")
+async def get_document_download_url(
+    document_id: uuid.UUID,
+    expires_in: int = Query(default=300, ge=30, le=3600),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+    storage: StorageBackend = Depends(get_storage),
+) -> dict[str, object]:
+    """Return an S3 presigned URL (when on S3) or API proxy content URL."""
+    doc = await require_document_access(
+        session, document_id=document_id, user=current_user, write=False
+    )
+    presigned = await storage.generate_presigned_url(
+        doc.storage_key,
+        expires_in=expires_in,
+        download_filename=doc.filename,
+    )
+    if presigned:
+        return {
+            "document_id": str(doc.id),
+            "mode": "s3_presigned",
+            "url": presigned,
+            "expires_in": expires_in,
+        }
+    return {
+        "document_id": str(doc.id),
+        "mode": "api_proxy",
+        "url": f"{settings.api_v1_prefix}/documents/{doc.id}/content?download=true",
+        "expires_in": expires_in,
+    }
+
+
 @router.get("/documents/{document_id}/chunks", response_model=list[DocumentChunkRead])
 async def list_document_chunks(
     document_id: uuid.UUID,
@@ -326,10 +359,18 @@ async def delete_document(
     session: AsyncSession = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ) -> Response:
-    """Delete a document, its stored bytes, and its indexed chunks."""
+    """Delete a document, its stored bytes, and its indexed chunks (blocked on legal hold)."""
+    from app.models.matter import Matter
+
     doc = await require_document_access(
         session, document_id=document_id, user=current_user, write=True
     )
+    matter = await session.get(Matter, doc.matter_id)
+    if doc.legal_hold_active or (matter is not None and matter.legal_hold_active):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete document while litigation legal hold is active.",
+        )
     storage_key = doc.storage_key
     await session.delete(doc)
     await session.commit()

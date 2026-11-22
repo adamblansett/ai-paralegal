@@ -19,6 +19,9 @@ class Playbook(Base):
     __tablename__ = "playbooks"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     practice_area: Mapped[str] = mapped_column(
         String(120), nullable=False, default="Commercial Contracts"

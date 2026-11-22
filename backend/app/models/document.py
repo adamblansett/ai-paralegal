@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -60,6 +61,10 @@ class Document(Base):
     pii_summary_json: Mapped[dict[str, Any]] = mapped_column(
         JSONBCompat, nullable=False, default=dict
     )
+    legal_hold_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, index=True
+    )
+    retention_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONBCompat, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

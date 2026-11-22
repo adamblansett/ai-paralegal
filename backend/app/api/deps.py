@@ -115,10 +115,21 @@ async def require_matter_access(
     user: User,
     write: bool = False,
 ) -> Matter:
-    """Enforce role + matter-level membership permissions and return Matter."""
+    """Enforce tenant isolation + role + matter-level membership permissions and return Matter."""
     matter = await session.get(Matter, matter_id)
     if matter is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matter not found.")
+
+    # Strict multi-tenant isolation boundary checked before firm role shortcuts
+    if (
+        user.organization_id is not None
+        and matter.organization_id is not None
+        and user.organization_id != matter.organization_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: matter belongs to another organization tenant.",
+        )
 
     if user.role == "auditor":
         if write:

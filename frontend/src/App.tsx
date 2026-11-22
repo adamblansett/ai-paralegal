@@ -5,8 +5,10 @@ import {
   Files,
   GitCompare,
   Loader2,
+  Lock,
   Scale,
   ShieldAlert,
+  Unlock,
   Users,
 } from 'lucide-react';
 import { api, tokenStore } from './api/client';
@@ -180,6 +182,21 @@ export default function App() {
     });
   }
 
+  async function handleToggleLegalHold(matter: Matter) {
+    setError(null);
+    const nextState = !matter.legal_hold_active;
+    try {
+      await api.toggleLegalHold(
+        matter.id,
+        nextState,
+        nextState ? 'Litigation hold activated via workspace' : 'Litigation hold released via workspace'
+      );
+      await refreshMatterData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to toggle litigation legal hold.');
+    }
+  }
+
   if (authChecking) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-xs text-slate-300 gap-2">
@@ -264,12 +281,37 @@ export default function App() {
                       <Activity className="h-3 w-3" />
                       {liveActivity ? liveActivity : sseConnected ? 'Live SSE' : 'Connecting SSE'}
                     </span>
+                    {activeMatter.legal_hold_active && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-900 ring-1 ring-rose-300">
+                        <Lock className="h-3 w-3" />
+                        Legal Hold Active
+                      </span>
+                    )}
                   </div>
                   <h2 className="mt-1.5 text-lg font-bold text-slate-900">{activeMatter.title}</h2>
                   <p className="text-xs text-slate-500">Client: {activeMatter.client_name}</p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                  {currentUser.role !== 'auditor' && (
+                    <button
+                      type="button"
+                      data-testid="legal-hold-btn"
+                      onClick={() => void handleToggleLegalHold(activeMatter)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                        activeMatter.legal_hold_active
+                          ? 'border-rose-300 bg-rose-50 text-rose-900 hover:bg-rose-100'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {activeMatter.legal_hold_active ? (
+                        <Unlock className="h-3.5 w-3.5 text-rose-700" />
+                      ) : (
+                        <Lock className="h-3.5 w-3.5 text-slate-600" />
+                      )}
+                      {activeMatter.legal_hold_active ? 'Release Legal Hold' : 'Legal Hold'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setTeamModalOpen(true)}
@@ -338,6 +380,7 @@ export default function App() {
                   matterId={activeMatter.id}
                   documents={documents}
                   canWrite={currentUser.role !== 'auditor'}
+                  legalHoldActive={Boolean(activeMatter.legal_hold_active)}
                   onOpenDocument={handleOpenDocument}
                   onRefresh={refreshMatterData}
                 />
@@ -367,6 +410,7 @@ export default function App() {
               )}
               {activeTab === 'review' && (
                 <ReviewAuditTab
+                  matterId={activeMatter.id}
                   findings={findings}
                   auditLogs={auditLogs}
                   currentUser={currentUser}

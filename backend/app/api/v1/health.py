@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends
+from typing import Any
+
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,3 +46,50 @@ async def health_check(
         oidc_enabled=settings.oidc_enabled,
         disclaimer=LEGAL_DISCLAIMER,
     )
+
+
+@router.get("/health/live")
+async def liveness_probe() -> dict[str, str]:
+    """Fast Kubernetes liveness probe confirming the Python process is responsive."""
+    return {"status": "alive"}
+
+
+@router.get("/health/ready")
+async def readiness_probe(
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    """Strict Kubernetes readiness probe checking database and Redis (when Celery active)."""
+    checks: dict[str, str] = {"database": "ok", "redis": "not_required"}
+    ready = True
+
+    try:
+        await session.execute(text("SELECT 1"))
+    except Exception as exc:
+        checks["database"] = f"error: {exc}"
+        ready = False
+
+    requires_redis = (
+        settings.task_execution_mode == "celery"
+        or settings.rate_limit_backend == "redis"
+        or settings.event_bus_backend == "redis"
+    )
+    if requires_redis and settings.redis_url:
+        client = aioredis.from_url(
+            settings.redis_url, socket_connect_timeout=1.5, socket_timeout=1.5
+        )
+        try:
+            await client.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            checks["redis"] = f"error: {exc}"
+            ready = False
+        finally:
+            await client.aclose()
+
+    if not ready:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "not_ready", "checks": checks},
+        )
+    return {"status": "ready", "checks": checks}

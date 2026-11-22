@@ -22,6 +22,11 @@ async def list_playbooks(
     _ = current_user
     await ensure_default_playbook(session)
     stmt = select(Playbook).order_by(Playbook.is_default.desc(), Playbook.name.asc())
+    if current_user.organization_id is not None:
+        stmt = stmt.where(
+            (Playbook.organization_id == current_user.organization_id)
+            | (Playbook.organization_id.is_(None))
+        )
     rows = (await session.execute(stmt)).scalars().all()
     return [PlaybookRead.model_validate(r) for r in rows]
 
@@ -46,6 +51,7 @@ async def create_playbook(
         await session.execute(update(Playbook).values(is_default=False))
 
     pb = Playbook(
+        organization_id=current_user.organization_id,
         name=payload.name.strip(),
         practice_area=payload.practice_area.strip(),
         description=payload.description,

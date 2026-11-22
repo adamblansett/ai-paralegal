@@ -1,7 +1,10 @@
 import type {
   AccessLevel,
+  AuditChainVerification,
   AuditLogEntry,
   BatesStampResponse,
+  DMSFileItem,
+  DMSProviderInfo,
   DocumentChunkItem,
   DocumentItem,
   DocumentUploadResponse,
@@ -192,6 +195,11 @@ export const api = {
     apiRequest<void>(`/matters/${matterId}/members/${userId}`, {
       method: 'DELETE',
     }),
+  toggleLegalHold: (matterId: string, active: boolean, reason?: string) =>
+    apiRequest<Matter>(`/matters/${matterId}/legal-hold`, {
+      method: 'POST',
+      body: JSON.stringify({ active, reason }),
+    }),
 
   // Playbooks
   listPlaybooks: () => apiRequest<Playbook[]>('/playbooks'),
@@ -373,6 +381,18 @@ export const api = {
 
   listAuditLogs: (matterId: string) =>
     apiRequest<AuditLogEntry[]>(`/matters/${matterId}/audit-logs`),
+  verifyAuditChain: (matterId: string) =>
+    apiRequest<AuditChainVerification>(`/matters/${matterId}/audit-logs/verify`),
+
+  // DMS Integrations
+  listDMSProviders: () => apiRequest<DMSProviderInfo[]>('/integrations/dms/providers'),
+  listDMSFiles: (provider: string) =>
+    apiRequest<DMSFileItem[]>(`/integrations/dms/${encodeURIComponent(provider)}/files`),
+  importDMSFile: (matterId: string, provider: string, externalId: string, documentType = 'general') =>
+    apiRequest<DocumentUploadResponse>(`/matters/${matterId}/integrations/dms/import`, {
+      method: 'POST',
+      body: JSON.stringify({ provider, external_id: externalId, document_type: documentType }),
+    }),
 
   matterEventsUrl: (matterId: string) =>
     `${API_BASE}/matters/${matterId}/events${authQuerySuffix('?')}`,
@@ -387,4 +407,6 @@ export const api = {
     `${API_BASE}/matters/${matterId}/exports/privilege-log?format=${format}${authQuerySuffix('&')}`,
   exportRiskMatrixUrl: (matterId: string, format: 'csv' | 'json') =>
     `${API_BASE}/matters/${matterId}/exports/risk-matrix?format=${format}${authQuerySuffix('&')}`,
+  exportEvalDatasetUrl: (matterId: string) =>
+    `${API_BASE}/matters/${matterId}/exports/eval-dataset${authQuerySuffix('?')}`,
 };

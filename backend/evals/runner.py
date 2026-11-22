@@ -569,9 +569,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Auto-probe live Ollama and Gemini models alongside offline mock baseline.",
     )
+    parser.add_argument(
+        "--merge-feedback",
+        default=None,
+        help="Optional exported attorney-approved feedback JSON file to validate regression cases.",
+    )
     parser.add_argument("--output", default=None, help="Optional JSON report output path.")
     parser.add_argument("--markdown", action="store_true", help="Print Markdown summary table.")
     args = parser.parse_args(argv)
+
+    if args.merge_feedback:
+        fb = json.loads(Path(args.merge_feedback).read_text(encoding="utf-8"))
+        fb_cases = fb.get("contract_feedback_cases", []) + fb.get("qa_feedback_cases", [])
+        print(f"Loaded {len(fb_cases)} attorney-approved regression feedback case(s).")
 
     if args.probe_live or args.compare:
         targets = (

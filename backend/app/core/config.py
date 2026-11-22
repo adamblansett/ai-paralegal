@@ -70,18 +70,32 @@ class Settings(BaseSettings):
     oidc_issuer_url: str = ""
     oidc_client_id: str = ""
     oidc_audience: str = ""
+    oidc_role_claim: str = "groups"
+    oidc_role_mapping_json: str = (
+        '{"legal-partners":"partner","legal-associates":"associate",'
+        '"legal-paralegals":"paralegal","legal-auditors":"auditor"}'
+    )
+    default_organization_slug: str = "default-firm"
+    default_organization_name: str = "Meridian Legal Group LLP"
 
-    # Upload Hardening & Outbound Cloud Guardrails
+    # Storage Security
+    s3_server_side_encryption: str = "AES256"
+    s3_kms_key_id: str = ""
+
+    # Upload Hardening, Webhooks & Outbound Cloud Guardrails
     max_upload_size_mb: int = Field(default=25, ge=1, le=500)
     allowed_upload_extensions: str = ".pdf,.docx,.txt,.md,.eml,.vtt,.srt"
     llm_redact_pii_for_cloud: bool = True
     llm_block_privileged_for_cloud: bool = True
     llm_task_routing_json: str = ""
+    webhook_allow_private_ips: bool = False
 
-    # Rate Limiting & Observability
+    # Distributed Backplanes, Rate Limiting & Observability
     rate_limit_enabled: bool = True
+    rate_limit_backend: Literal["memory", "redis", "auto"] = "memory"
     rate_limit_auth_per_minute: int = Field(default=120, ge=1, le=10000)
     rate_limit_llm_per_minute: int = Field(default=120, ge=1, le=10000)
+    event_bus_backend: Literal["memory", "redis", "auto"] = "memory"
     otel_enabled: bool = False
     otel_service_name: str = "ai-paralegal-api"
 
@@ -129,3 +143,24 @@ def get_settings() -> Settings:
 def clear_settings_cache() -> None:
     """Clear cached settings (primarily for testing overrides)."""
     get_settings.cache_clear()
+
+
+_DEFAULT_DEV_SECRET = "dev-insecure-secret-change-in-production-32bytes"
+
+
+def validate_production_security(settings: Settings) -> None:
+    """Fail fast at boot if insecure dev defaults remain active in production."""
+    if settings.app_env.strip().lower() != "production":
+        return
+
+    errors: list[str] = []
+    if settings.auth_secret_key == _DEFAULT_DEV_SECRET or len(settings.auth_secret_key) < 32:
+        errors.append(
+            "AUTH_SECRET_KEY must be overridden with a unique >=32-byte secret in production."
+        )
+    if settings.auth_auto_seed_demo_users:
+        errors.append("AUTH_AUTO_SEED_DEMO_USERS must be false in production.")
+    if "*" in settings.cors_origin_list:
+        errors.append("CORS_ORIGINS must not contain wildcard '*' in production.")
+    if errors:
+        raise RuntimeError("Production security validation failed: " + " | ".join(errors))

@@ -30,4 +30,16 @@ class AuditLogRead(BaseModel):
     previous_state: str | None
     new_state: str | None
     notes: str | None
+    sequence_number: int = 0
+    previous_hash: str | None = None
+    entry_hash: str | None = None
     created_at: datetime
+
+
+class AuditChainVerificationRead(BaseModel):
+    matter_id: uuid.UUID
+    total_entries: int
+    verified: bool
+    broken_at_sequence: int | None = None
+    latest_hash: str | None = None
+    detail: str

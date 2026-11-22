@@ -10,7 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     tesseract-ocr \
     poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 appgroup \
+    && useradd --uid 10001 --gid appgroup --shell /usr/sbin/nologin --create-home appuser
 
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir ".[docx]"
@@ -19,8 +21,13 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
 
-RUN mkdir -p /data/storage
+RUN mkdir -p /data/storage && chown -R appuser:appgroup /app /data/storage
+
+USER appuser
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/api/v1/health/live || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

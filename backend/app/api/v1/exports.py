@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, require_matter_access
 from app.models.user import User
+from app.services.eval_feedback import export_approved_feedback_dataset
 from app.services.exports import (
     export_chronology,
     export_privilege_log,
@@ -120,6 +121,28 @@ async def download_risk_matrix(
     try:
         content, media_type, filename = await export_risk_matrix(
             session, matter_id=matter_id, fmt=fmt
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/matters/{matter_id}/exports/eval-dataset")
+async def download_feedback_eval_dataset(
+    matter_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Export attorney-approved findings & edits into regression evaluation test cases."""
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=False)
+    try:
+        content, media_type, filename = await export_approved_feedback_dataset(
+            session, matter_id=matter_id
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

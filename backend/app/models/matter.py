@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -26,6 +26,9 @@ class Matter(Base):
     __tablename__ = "matters"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     matter_number: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     client_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -33,6 +36,15 @@ class Matter(Base):
     jurisdiction: Mapped[str | None] = mapped_column(String(120), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    legal_hold_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, index=True
+    )
+    legal_hold_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    legal_hold_set_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    legal_hold_set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONBCompat, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

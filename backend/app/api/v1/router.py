@@ -9,6 +9,7 @@ from app.api.v1 import (
     exports,
     findings,
     health,
+    integrations,
     matters,
     metrics,
     playbooks,
@@ -25,4 +26,5 @@ api_v1_router.include_router(findings.router)
 api_v1_router.include_router(audit.router)
 api_v1_router.include_router(exports.router)
 api_v1_router.include_router(events.router)
+api_v1_router.include_router(integrations.router)
 api_v1_router.include_router(metrics.router)

@@ -58,6 +58,9 @@ class AuditLog(Base):
     previous_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
     new_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    previous_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, index=True
     )

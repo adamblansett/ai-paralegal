@@ -3,14 +3,17 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Download,
   Edit3,
   Flag,
   History,
+  Lock,
   RotateCcw,
   ShieldCheck,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type {
+  AuditChainVerification,
   AuditLogEntry,
   ExtractedFinding,
   ReviewStatus,
@@ -20,6 +23,7 @@ import type {
 import { CitationBadge } from './CitationBadge';
 
 interface ReviewAuditTabProps {
+  matterId: string;
   findings: ExtractedFinding[];
   auditLogs: AuditLogEntry[];
   currentUser: UserProfile;
@@ -34,6 +38,7 @@ const REVIEW_BADGE: Record<ReviewStatus, string> = {
 };
 
 export function ReviewAuditTab({
+  matterId,
   findings,
   auditLogs,
   currentUser,
@@ -47,6 +52,8 @@ export function ReviewAuditTab({
   const [editSummary, setEditSummary] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [expandedAuditId, setExpandedAuditId] = useState<string | null>(null);
+  const [chainVerification, setChainVerification] = useState<AuditChainVerification | null>(null);
+  const [verifyingChain, setVerifyingChain] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const canWrite = currentUser.role !== 'auditor';
@@ -96,6 +103,19 @@ export function ReviewAuditTab({
       await onRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Batch review failed.');
+    }
+  }
+
+  async function handleVerifyChain() {
+    setError(null);
+    setVerifyingChain(true);
+    try {
+      const res = await api.verifyAuditChain(matterId);
+      setChainVerification(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to verify audit hash chain.');
+    } finally {
+      setVerifyingChain(false);
     }
   }
 
@@ -381,7 +401,46 @@ export function ReviewAuditTab({
 
       {/* IMMUTABLE AUDIT TRAIL */}
       {view === 'audit' && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={verifyingChain}
+                onClick={() => void handleVerifyChain()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                <Lock className="h-3.5 w-3.5" />
+                {verifyingChain ? 'Verifying Chain...' : 'Verify SHA-256 Audit Chain'}
+              </button>
+              {chainVerification && (
+                <span
+                  data-testid="audit-chain-status"
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+                    chainVerification.verified
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                      : 'border-rose-300 bg-rose-50 text-rose-900'
+                  }`}
+                >
+                  {chainVerification.verified ? 'Chain Intact' : 'Tampering Detected'} (
+                  {chainVerification.total_entries} entries)
+                  {chainVerification.latest_hash
+                    ? ` • ${chainVerification.latest_hash.slice(0, 12)}…`
+                    : ''}
+                </span>
+              )}
+            </div>
+
+            <a
+              href={api.exportEvalDatasetUrl(matterId)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export Eval Dataset (.json)
+            </a>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           {auditLogs.length === 0 ? (
             <div className="p-10 text-center text-xs text-slate-500">
               No audit log records yet.
@@ -486,6 +545,7 @@ export function ReviewAuditTab({
               })}
             </div>
           )}
+          </div>
         </div>
       )}
     </div>

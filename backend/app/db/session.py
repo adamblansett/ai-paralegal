@@ -33,6 +33,10 @@ def create_async_engine_from_url(
         kwargs["connect_args"] = {"check_same_thread": False}
     elif not use_null_pool:
         kwargs["pool_pre_ping"] = True
+        kwargs["pool_size"] = 10
+        kwargs["max_overflow"] = 20
+        kwargs["pool_recycle"] = 1800
+        kwargs["pool_timeout"] = 30
 
     engine = create_async_engine(database_url, **kwargs)
 

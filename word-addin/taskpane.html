@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Paralegal Word Add-in</title>
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; color: #0f172a; background: #f8fafc; }
+      h1 { font-size: 16px; margin-bottom: 4px; }
+      .notice { font-size: 11px; color: #92400e; background: #fef3c7; padding: 8px; border-radius: 6px; margin-bottom: 12px; }
+      input, button { width: 100%; padding: 8px; margin-top: 6px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 12px; }
+      button { background: #4f46e5; color: #fff; font-weight: 600; border: none; cursor: pointer; }
+      .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; margin-top: 10px; }
+      .quote { font-family: monospace; font-size: 11px; color: #991b1b; background: #fef2f2; padding: 6px; border-radius: 4px; }
+      .redline { font-family: monospace; font-size: 11px; color: #166534; background: #f0fdf4; padding: 6px; border-radius: 4px; margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>AI Paralegal — Word Redliner</h1>
+    <div class="notice">
+      AI-assisted legal ops tool. Licensed attorney verification required before accepting or sending redlines.
+    </div>
+    <label for="apiBase" style="font-size:12px;font-weight:600;">API Base URL</label>
+    <input id="apiBase" value="http://localhost:8000/api/v1" />
+    <label for="matterId" style="font-size:12px;font-weight:600;margin-top:8px;display:block;">Matter UUID</label>
+    <input id="matterId" placeholder="Paste Matter UUID" />
+    <label for="jwt" style="font-size:12px;font-weight:600;margin-top:8px;display:block;">Bearer JWT</label>
+    <input id="jwt" type="password" placeholder="Paste Bearer token" />
+    <button id="loadBtn" type="button">Load Approved Redlines</button>
+    <div id="list"></div>
+    <script src="./taskpane.js"></script>
+  </body>
+</html>

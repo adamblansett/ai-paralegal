@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -11,6 +12,7 @@ from app.api.deps import get_app_settings, get_current_user, get_db
 from app.core.config import Settings
 from app.core.rate_limit import rate_limit_auth
 from app.core.security import (
+    ALLOWED_ROLES,
     TokenError,
     create_access_token,
     decode_access_token,
@@ -19,6 +21,7 @@ from app.core.security import (
     hash_refresh_token,
     verify_password,
 )
+from app.models.organization import Organization
 from app.models.user import RefreshToken, RevokedToken, User
 from app.schemas.auth import (
     AuthProvidersResponse,
@@ -31,6 +34,7 @@ from app.schemas.auth import (
     UserRegister,
 )
 from app.schemas.common import MessageResponse
+from app.services.seed import ensure_default_organization
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _optional_bearer = HTTPBearer(auto_error=False)
@@ -69,6 +73,70 @@ async def _issue_token_pair(
     )
 
 
+_ROLE_RANK: dict[str, int] = {
+    "partner": 4,
+    "associate": 3,
+    "paralegal": 2,
+    "auditor": 1,
+}
+
+
+def map_oidc_groups_to_role(claims: dict[str, Any], settings: Settings) -> str:
+    """Resolve highest-privilege firm role from OIDC group/role claims."""
+    try:
+        mapping = json.loads(settings.oidc_role_mapping_json or "{}")
+    except Exception:
+        mapping = {}
+    if not isinstance(mapping, dict):
+        mapping = {}
+
+    raw_groups = claims.get(settings.oidc_role_claim) or claims.get("roles") or []
+    if isinstance(raw_groups, str):
+        groups = [g.strip() for g in raw_groups.split(",") if g.strip()]
+    elif isinstance(raw_groups, list):
+        groups = [str(g).strip() for g in raw_groups if str(g).strip()]
+    else:
+        groups = []
+
+    matched_roles: list[str] = []
+    for grp in groups:
+        mapped = mapping.get(grp)
+        if isinstance(mapped, str) and mapped in ALLOWED_ROLES:
+            matched_roles.append(mapped)
+        elif grp.lower() in ALLOWED_ROLES:
+            matched_roles.append(grp.lower())
+
+    if not matched_roles:
+        return "associate"
+    return max(matched_roles, key=lambda r: _ROLE_RANK.get(r, 0))
+
+
+async def _resolve_org_for_registration(
+    session: AsyncSession,
+    *,
+    slug: str | None,
+    name: str | None,
+    settings: Settings,
+) -> Organization:
+    if not slug or not slug.strip():
+        return await ensure_default_organization(session, settings)
+    norm_slug = slug.strip().lower()
+    existing = (
+        await session.execute(select(Organization).where(Organization.slug == norm_slug))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    org = Organization(
+        slug=norm_slug,
+        name=(name or norm_slug.replace("-", " ").title()).strip(),
+        retention_days=2555,
+        is_active=True,
+    )
+    session.add(org)
+    await session.flush()
+    return org
+
+
 @router.get("/providers", response_model=AuthProvidersResponse)
 async def get_auth_providers(
     settings: Settings = Depends(get_app_settings),
@@ -104,7 +172,14 @@ async def register_user(
             detail=f"User with email '{normalized_email}' is already registered.",
         )
 
+    org = await _resolve_org_for_registration(
+        session,
+        slug=payload.organization_slug,
+        name=payload.organization_name,
+        settings=settings,
+    )
     user = User(
+        organization_id=org.id,
         email=normalized_email,
         full_name=payload.full_name.strip(),
         role=payload.role,
@@ -314,11 +389,20 @@ async def oidc_exchange(
     ).scalar_one_or_none()
     if user is None:
         full_name = str(claims.get("name") or email.split("@")[0]).strip()
+        resolved_role = map_oidc_groups_to_role(claims, settings)
+        org_slug = claims.get("organization_slug") or claims.get("org")
+        org = await _resolve_org_for_registration(
+            session,
+            slug=str(org_slug) if org_slug else None,
+            name=None,
+            settings=settings,
+        )
         _, random_pw = generate_refresh_token()
         user = User(
+            organization_id=org.id,
             email=email,
             full_name=full_name,
-            role="associate",
+            role=resolved_role,
             password_hash=hash_password(random_pw),
             is_active=True,
         )
@@ -345,8 +429,9 @@ async def list_firm_users(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[UserRead]:
-    """List active users available for matter team assignment."""
-    _ = current_user
+    """List active users available for matter team assignment within the caller's tenant."""
     stmt = select(User).where(User.is_active.is_(True)).order_by(User.full_name.asc())
+    if current_user.organization_id is not None:
+        stmt = stmt.where(User.organization_id == current_user.organization_id)
     users = (await session.execute(stmt)).scalars().all()
     return [UserRead.model_validate(u) for u in users]

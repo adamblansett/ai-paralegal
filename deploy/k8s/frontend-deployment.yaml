@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-paralegal-frontend
+  namespace: ai-paralegal
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-paralegal-frontend
+  template:
+    metadata:
+      labels:
+        app: ai-paralegal-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+      containers:
+        - name: frontend
+          image: ghcr.io/adamblansett/ai-paralegal-frontend:latest
+          ports:
+            - containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: ai-paralegal
+spec:
+  selector:
+    app: ai-paralegal-frontend
+  ports:
+    - port: 80
+      targetPort: 8080
