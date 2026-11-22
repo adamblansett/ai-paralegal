@@ -1,0 +1,261 @@
+import { useCallback, useEffect, useState } from 'react';
+import {
+  FileCheck2,
+  Files,
+  GitCompare,
+  Loader2,
+  Scale,
+  ShieldAlert,
+} from 'lucide-react';
+import { api } from './api/client';
+import { ContractReviewTab } from './components/ContractReviewTab';
+import { DisclaimerBanner } from './components/DisclaimerBanner';
+import { DiscoveryDraftingTab } from './components/DiscoveryDraftingTab';
+import { DocumentsTab } from './components/DocumentsTab';
+import { MatterSidebar } from './components/MatterSidebar';
+import { NewMatterModal } from './components/NewMatterModal';
+import { ReviewAuditTab } from './components/ReviewAuditTab';
+import type {
+  AuditLogEntry,
+  DocumentItem,
+  ExtractedFinding,
+  HealthResponse,
+  Matter,
+  MatterCreateInput,
+  ReviewTaskItem,
+} from './types/api';
+
+type WorkspaceTab = 'documents' | 'contracts' | 'discovery' | 'review';
+
+export default function App() {
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [matters, setMatters] = useState<Matter[]>([]);
+  const [selectedMatterId, setSelectedMatterId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('documents');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [findings, setFindings] = useState<ExtractedFinding[]>([]);
+  const [tasks, setTasks] = useState<ReviewTaskItem[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+
+  const loadBootstrap = useCallback(async () => {
+    try {
+      const [h, mList] = await Promise.all([api.health(), api.listMatters()]);
+      setHealth(h);
+      setMatters(mList);
+      setSelectedMatterId((prev) => {
+        if (prev && mList.some((m) => m.id === prev)) return prev;
+        return mList[0]?.id ?? null;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to connect to AI Paralegal API.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const refreshMatterData = useCallback(async () => {
+    if (!selectedMatterId) return;
+    try {
+      const [mList, docs, fList, tList, logs] = await Promise.all([
+        api.listMatters(),
+        api.listDocuments(selectedMatterId),
+        api.listFindings(selectedMatterId),
+        api.listTasks(selectedMatterId),
+        api.listAuditLogs(selectedMatterId),
+      ]);
+      setMatters(mList);
+      setDocuments(docs);
+      setFindings(fList);
+      setTasks(tList);
+      setAuditLogs(logs);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load matter workspace.');
+    }
+  }, [selectedMatterId]);
+
+  useEffect(() => {
+    void loadBootstrap();
+  }, [loadBootstrap]);
+
+  useEffect(() => {
+    void refreshMatterData();
+  }, [refreshMatterData]);
+
+  async function handleCreateMatter(payload: MatterCreateInput) {
+    const created = await api.createMatter(payload);
+    await loadBootstrap();
+    setSelectedMatterId(created.id);
+    setActiveTab('documents');
+  }
+
+  const activeMatter = matters.find((m) => m.id === selectedMatterId) ?? null;
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-slate-50">
+      <MatterSidebar
+        matters={matters}
+        selectedMatterId={selectedMatterId}
+        onSelectMatter={setSelectedMatterId}
+        onNewMatter={() => setModalOpen(true)}
+        health={health}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <DisclaimerBanner text={health?.disclaimer} />
+
+        {loading ? (
+          <div className="flex flex-1 items-center justify-center gap-2 text-sm text-slate-500">
+            <Loader2 className="h-5 w-5 animate-spin text-indigo-600" />
+            Connecting to AI Paralegal workspace...
+          </div>
+        ) : !activeMatter ? (
+          <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+              <Scale className="h-7 w-7" />
+            </div>
+            <h2 className="mt-4 text-lg font-semibold text-slate-900">
+              Welcome to AI Paralegal
+            </h2>
+            <p className="mt-1.5 max-w-md text-xs leading-relaxed text-slate-500">
+              Create your first legal matter to ingest contracts and discovery records, run
+              clause-risk extraction, synthesize timelines and contradictions, and review
+              citation-grounded attorney drafts.
+            </p>
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              className="mt-5 rounded-lg bg-indigo-600 px-5 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500"
+            >
+              + Create First Legal Matter
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Matter Workspace Header */}
+            <header className="border-b border-slate-200 bg-white px-6 pt-4">
+              <div className="flex flex-wrap items-start justify-between gap-4 pb-4">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-indigo-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-indigo-700">
+                      {activeMatter.matter_number}
+                    </span>
+                    <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                      {activeMatter.practice_area}
+                    </span>
+                    {activeMatter.jurisdiction && (
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
+                        {activeMatter.jurisdiction}
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="mt-1.5 text-lg font-bold text-slate-900">
+                    {activeMatter.title}
+                  </h2>
+                  <p className="text-xs text-slate-500">Client: {activeMatter.client_name}</p>
+                </div>
+
+                <div className="flex items-center gap-3 text-xs">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5">
+                    <span className="text-slate-500">Docs:</span>{' '}
+                    <strong className="text-slate-900">{activeMatter.stats.document_count}</strong>
+                  </div>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5">
+                    <span className="text-amber-800">Pending Review:</span>{' '}
+                    <strong className="text-amber-950">
+                      {activeMatter.stats.pending_review_count}
+                    </strong>
+                  </div>
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5">
+                    <span className="text-emerald-800">Approved:</span>{' '}
+                    <strong className="text-emerald-950">
+                      {activeMatter.stats.approved_count}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Workspace Tabs */}
+              <nav className="flex flex-wrap gap-1" aria-label="Matter workspace sections">
+                {[
+                  { id: 'documents', label: 'Documents & Provenance', icon: Files },
+                  { id: 'contracts', label: 'Contract & Clause Risk', icon: ShieldAlert },
+                  { id: 'discovery', label: 'Q&A, Synthesis & Drafting', icon: GitCompare },
+                  { id: 'review', label: 'Review Queue & Audit Trail', icon: FileCheck2 },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const active = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveTab(tab.id as WorkspaceTab)}
+                      className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-semibold transition ${
+                        active
+                          ? 'border-indigo-600 text-indigo-700'
+                          : 'border-transparent text-slate-600 hover:border-slate-300 hover:text-slate-900'
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </nav>
+            </header>
+
+            {error && (
+              <div className="mx-6 mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800">
+                {error}
+              </div>
+            )}
+
+            <main className="flex-1 overflow-y-auto p-6">
+              {activeTab === 'documents' && (
+                <DocumentsTab
+                  matterId={activeMatter.id}
+                  documents={documents}
+                  onRefresh={refreshMatterData}
+                />
+              )}
+              {activeTab === 'contracts' && (
+                <ContractReviewTab
+                  matterId={activeMatter.id}
+                  documents={documents}
+                  findings={findings}
+                  health={health}
+                  onRefresh={refreshMatterData}
+                />
+              )}
+              {activeTab === 'discovery' && (
+                <DiscoveryDraftingTab
+                  matterId={activeMatter.id}
+                  findings={findings}
+                  tasks={tasks}
+                  health={health}
+                  onRefresh={refreshMatterData}
+                />
+              )}
+              {activeTab === 'review' && (
+                <ReviewAuditTab
+                  findings={findings}
+                  auditLogs={auditLogs}
+                  onRefresh={refreshMatterData}
+                />
+              )}
+            </main>
+          </>
+        )}
+      </div>
+
+      <NewMatterModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onCreate={handleCreateMatter}
+      />
+    </div>
+  );
+}

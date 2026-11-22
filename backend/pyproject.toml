@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-paralegal-backend"
+version = "0.1.0"
+description = "Production-ready AI Paralegal backend for legal document ingestion, contract review, discovery synthesis, and citation-grounded drafting."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "alembic>=1.14.0",
+    "aiosqlite>=0.20.0",
+    "asyncpg>=0.30.0",
+    "pgvector>=0.3.6",
+    "celery>=5.4.0",
+    "redis>=5.2.0",
+    "httpx>=0.28.0",
+    "pypdf>=5.1.0",
+    "python-multipart>=0.0.18",
+    "boto3>=1.35.0",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+docx = ["python-docx>=1.1.2"]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+disallow_untyped_defs = true
+no_implicit_optional = true
+ignore_missing_imports = true
+warn_unused_ignores = true

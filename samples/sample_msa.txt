@@ -1,0 +1,50 @@
+MASTER SERVICES AGREEMENT
+
+This Master Services Agreement ("Agreement") is entered into and effective as of January 15, 2026 ("Effective Date"), by and between Apex Cloud Corp., a Delaware corporation ("Vendor"), and Meridian Legal Group LLP, a New York limited liability partnership ("Client").
+
+SECTION 1. DEFINITIONS AND SCOPE OF SERVICES
+1.1 Vendor shall provide enterprise cloud document hosting, workflow orchestration, and analytics services ("Services") as described in mutually executed Statements of Work.
+1.2 Vendor shall use commercially reasonable efforts to maintain platform availability in accordance with standard operating practices, provided that Client complies with all acceptable use policies issued by Vendor from time to time.
+
+SECTION 2. FEES AND PAYMENT TERMS
+2.1 Client shall pay Vendor an annual subscription fee of $240,000, invoiced annually in advance and payable within fifteen (15) days of invoice date.
+2.2 Late payments shall accrue interest at 1.5% per month. Vendor may suspend access to the Services immediately without notice if any undisputed invoice remains unpaid for five (5) business days.
+
+SECTION 3. REPRESENTATIONS AND WARRANTIES
+3.1 Each party represents that it has the corporate power and authority to enter into this Agreement.
+3.2 EXCEPT AS EXPRESSLY PROVIDED HEREIN, VENDOR DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+
+SECTION 4. INTELLECTUAL PROPERTY ASSIGNMENT
+4.1 Client hereby irrevocably assigns and transfers to Vendor all right, title, and interest worldwide in and to any feedback, configurations, workflows, prompts, derivative works, and any Client background IP, pre-existing tools, or proprietary templates incorporated into or utilized in connection with the Services, without any license back to Client or carve-out for Client pre-existing intellectual property.
+
+SECTION 5. CONFIDENTIALITY
+5.1 Client shall hold all Vendor technical, commercial, and pricing information in strict confidence in perpetuity, with no expiration date and without carve-outs for information that becomes publicly available, is independently developed, or is required to be disclosed pursuant to a valid court order or regulatory subpoena.
+5.2 Vendor may disclose Client data to third-party sub-processors and analytics partners as Vendor deems appropriate in its sole discretion.
+
+SECTION 6. INDEMNIFICATION
+6.1 Client shall defend, indemnify, and hold harmless Vendor and its officers, directors, affiliates, and subcontractors from and against any and all third-party claims, damages, regulatory fines, liabilities, and attorneys' fees arising out of or relating to Client's use of the Services, Client Content, or any allegation involving Client personnel, on an uncapped basis and regardless of whether Vendor contributed to the underlying claim.
+6.2 Vendor provides no indemnification obligations whatsoever to Client, including no intellectual property infringement indemnification.
+
+SECTION 7. LIMITATION OF LIABILITY
+7.1 IN NO EVENT SHALL VENDOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL, CONSEQUENTIAL, SPECIAL, OR PUNITIVE DAMAGES.
+7.2 VENDOR'S TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATED TO THIS AGREEMENT SHALL NOT EXCEED ONE (1) MONTH OF FEES PAID BY CLIENT UNDER THE APPLICABLE ORDER FORM ($20,000), WITH NO CARVE-OUTS FOR GROSS NEGLIGENCE, WILLFUL MISCONDUCT, FRAUD, OR BREACH OF CONFIDENTIALITY.
+
+SECTION 8. TERM, TERMINATION, AND AUTO-RENEWAL
+8.1 The initial term of this Agreement is twenty-four (24) months from the Effective Date ("Initial Term"). Thereafter, this Agreement shall automatically renew for successive twenty-four (24) month renewal terms unless Client delivers written notice of non-renewal at least ninety (90) days prior to the end of the then-current term.
+8.2 Vendor may terminate this Agreement for convenience at any time upon ten (10) days' written notice to Client without refund of prepaid annual fees. Client has no right to terminate for convenience and no cure period is granted to Client for alleged material breaches prior to Vendor termination.
+
+SECTION 9. GOVERNING LAW AND DISPUTE RESOLUTION
+9.1 This Agreement shall be governed by and construed in accordance with the laws of the State of Delaware, without regard to its conflict of law principles.
+9.2 Any dispute arising out of this Agreement shall be resolved exclusively by binding arbitration administered in Wilmington, Delaware.
+
+SECTION 10. GENERAL PROVISIONS
+10.1 Client may not assign this Agreement without Vendor's prior written consent. Vendor may assign this Agreement freely without notice to Client.
+10.2 This Agreement constitutes the entire understanding between the parties and supersedes all prior negotiations, proposals, and emails.
+
+IN WITNESS WHEREOF, the parties have executed this Agreement as of the Effective Date.
+
+APEX CLOUD CORP.
+By: Jordan Vance, Chief Revenue Officer
+
+MERIDIAN LEGAL GROUP LLP
+By: Elena Rostova, Managing Partner
