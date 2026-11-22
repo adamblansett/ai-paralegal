@@ -54,6 +54,9 @@ export function AuthGate({ onAuthenticated }: AuthGateProps) {
     try {
       const res = await api.login(loginEmail, loginPass);
       tokenStore.set(res.access_token);
+      if (res.refresh_token) {
+        tokenStore.setRefresh(res.refresh_token);
+      }
       onAuthenticated(res.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed.');
@@ -78,6 +81,9 @@ export function AuthGate({ onAuthenticated }: AuthGateProps) {
         role,
       });
       tokenStore.set(res.access_token);
+      if (res.refresh_token) {
+        tokenStore.setRefresh(res.refresh_token);
+      }
       onAuthenticated(res.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed.');

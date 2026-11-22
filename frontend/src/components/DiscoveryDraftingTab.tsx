@@ -27,6 +27,7 @@ interface DiscoveryDraftingTabProps {
   findings: ExtractedFinding[];
   tasks: ReviewTaskItem[];
   health: HealthResponse | null;
+  onInspectCitation?: (citation: VerifiedCitation) => void;
   onRefresh: () => Promise<void>;
 }
 
@@ -37,6 +38,7 @@ export function DiscoveryDraftingTab({
   findings,
   tasks,
   health,
+  onInspectCitation,
   onRefresh,
 }: DiscoveryDraftingTabProps) {
   const [subView, setSubView] = useState<SubView>('qa');
@@ -323,7 +325,12 @@ export function DiscoveryDraftingTab({
                   Verified Source Citations ({qaResult.citations.length})
                 </h4>
                 {qaResult.citations.map((cit, idx) => (
-                  <CitationBadge key={`qa-cit-${idx}`} citation={cit} index={idx} />
+                  <CitationBadge
+                    key={`qa-cit-${idx}`}
+                    citation={cit}
+                    index={idx}
+                    onInspectCitation={onInspectCitation}
+                  />
                 ))}
               </div>
 
@@ -428,7 +435,12 @@ export function DiscoveryDraftingTab({
                     <p className="text-xs font-semibold text-rose-950">{f.title}</p>
                     <p className="text-xs text-slate-700">{f.summary}</p>
                     {f.citations_json.map((c, idx) => (
-                      <CitationBadge key={`${f.id}-con-${idx}`} citation={c} index={idx} />
+                      <CitationBadge
+                        key={`${f.id}-con-${idx}`}
+                        citation={c}
+                        index={idx}
+                        onInspectCitation={onInspectCitation}
+                      />
                     ))}
                   </div>
                 ))
@@ -447,7 +459,12 @@ export function DiscoveryDraftingTab({
                     <p className="text-xs font-semibold text-amber-950">{f.title}</p>
                     <p className="text-xs text-slate-700">{f.summary}</p>
                     {f.citations_json.map((c, idx) => (
-                      <CitationBadge key={`${f.id}-om-${idx}`} citation={c} index={idx} />
+                      <CitationBadge
+                        key={`${f.id}-om-${idx}`}
+                        citation={c}
+                        index={idx}
+                        onInspectCitation={onInspectCitation}
+                      />
                     ))}
                   </div>
                 ))
@@ -480,7 +497,12 @@ export function DiscoveryDraftingTab({
                       </div>
                       <p className="text-xs text-slate-700">{ev.summary}</p>
                       {ev.citations_json.map((c, idx) => (
-                        <CitationBadge key={`${ev.id}-tl-${idx}`} citation={c} index={idx} />
+                        <CitationBadge
+                          key={`${ev.id}-tl-${idx}`}
+                          citation={c}
+                          index={idx}
+                          onInspectCitation={onInspectCitation}
+                        />
                       ))}
                     </div>
                   ))}
@@ -618,7 +640,12 @@ export function DiscoveryDraftingTab({
                       Source Citations
                     </h5>
                     {(draftResult.citations ?? []).map((cit, idx) => (
-                      <CitationBadge key={`dc-${idx}`} citation={cit} index={idx} />
+                      <CitationBadge
+                        key={`dc-${idx}`}
+                        citation={cit}
+                        index={idx}
+                        onInspectCitation={onInspectCitation}
+                      />
                     ))}
                   </div>
                 )}

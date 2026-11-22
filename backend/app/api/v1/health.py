@@ -38,5 +38,8 @@ async def health_check(
         auth_enabled=True,
         ocr_backend=settings.ocr_backend,
         tesseract_available=OCRService.is_tesseract_available(),
+        max_upload_size_mb=settings.max_upload_size_mb,
+        pii_cloud_redaction_enabled=settings.llm_redact_pii_for_cloud,
+        oidc_enabled=settings.oidc_enabled,
         disclaimer=LEGAL_DISCLAIMER,
     )

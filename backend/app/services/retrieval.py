@@ -30,6 +30,8 @@ class RetrievedChunk:
     lexical_score: float
     semantic_score: float
     rrf_score: float
+    privilege_status: str = "none"
+    bates_number: str | None = None
 
 
 def chunks_to_source_contexts(items: list[RetrievedChunk]) -> list[SourceChunkContext]:
@@ -47,6 +49,8 @@ def chunks_to_source_contexts(items: list[RetrievedChunk]) -> list[SourceChunkCo
             section_heading=item.section_heading,
             char_start=item.char_start,
             char_end=item.char_end,
+            privilege_status=item.privilege_status,
+            bates_number=item.bates_number,
             content=item.content,
         )
         for idx, item in enumerate(items, start=1)
@@ -62,7 +66,12 @@ async def load_matter_chunks(
 ) -> list[SourceChunkContext]:
     """Load ordered indexed document chunks for a matter (optionally filtered by documents)."""
     stmt = (
-        select(DocumentChunk, Document.filename, Document.document_type)
+        select(
+            DocumentChunk,
+            Document.filename,
+            Document.document_type,
+            Document.privilege_status,
+        )
         .join(Document, DocumentChunk.document_id == Document.id)
         .where(
             DocumentChunk.matter_id == matter_id,
@@ -76,7 +85,9 @@ async def load_matter_chunks(
 
     rows = (await session.execute(stmt)).all()
     contexts: list[SourceChunkContext] = []
-    for idx, (chunk, filename, doc_type) in enumerate(rows, start=1):
+    for idx, (chunk, filename, doc_type, priv_status) in enumerate(rows, start=1):
+        meta = chunk.metadata_json or {}
+        raw_bates = meta.get("bates_number")
         contexts.append(
             SourceChunkContext(
                 chunk_ref=f"C{idx}",
@@ -90,6 +101,8 @@ async def load_matter_chunks(
                 section_heading=chunk.section_heading,
                 char_start=chunk.char_start,
                 char_end=chunk.char_end,
+                privilege_status=priv_status or "none",
+                bates_number=str(raw_bates) if raw_bates else None,
                 content=chunk.content,
             )
         )
@@ -178,19 +191,29 @@ async def _postgres_hybrid_search(
 
     top_ids = sorted(scores.keys(), key=lambda uid: scores[uid]["rrf"], reverse=True)[:top_k]
     stmt = (
-        select(DocumentChunk, Document.filename, Document.document_type)
+        select(
+            DocumentChunk,
+            Document.filename,
+            Document.document_type,
+            Document.privilege_status,
+        )
         .join(Document, DocumentChunk.document_id == Document.id)
         .where(DocumentChunk.id.in_(top_ids))
     )
     rows = (await session.execute(stmt)).all()
-    by_id = {chunk.id: (chunk, filename, doc_type) for chunk, filename, doc_type in rows}
+    by_id = {
+        chunk.id: (chunk, filename, doc_type, priv_status)
+        for chunk, filename, doc_type, priv_status in rows
+    }
 
     results: list[RetrievedChunk] = []
     for uid in top_ids:
         if uid not in by_id:
             continue
-        chunk, filename, doc_type = by_id[uid]
+        chunk, filename, doc_type, priv_status = by_id[uid]
         s = scores[uid]
+        meta = chunk.metadata_json or {}
+        raw_bates = meta.get("bates_number")
         results.append(
             RetrievedChunk(
                 chunk_id=chunk.id,
@@ -207,6 +230,8 @@ async def _postgres_hybrid_search(
                 lexical_score=round(s["lex"], 4),
                 semantic_score=round(s["sem"], 4),
                 rrf_score=round(s["rrf"], 6),
+                privilege_status=priv_status or "none",
+                bates_number=str(raw_bates) if raw_bates else None,
             )
         )
     return results
@@ -243,7 +268,12 @@ async def hybrid_search(
             pass
 
     stmt = (
-        select(DocumentChunk, Document.filename, Document.document_type)
+        select(
+            DocumentChunk,
+            Document.filename,
+            Document.document_type,
+            Document.privilege_status,
+        )
         .join(Document, DocumentChunk.document_id == Document.id)
         .where(
             DocumentChunk.matter_id == matter_id,
@@ -257,14 +287,14 @@ async def hybrid_search(
     if not rows:
         return []
 
-    scored_items: list[tuple[DocumentChunk, str, str, float, float]] = []
-    for chunk, filename, doc_type in rows:
+    scored_items: list[tuple[DocumentChunk, str, str, str, float, float]] = []
+    for chunk, filename, doc_type, priv_status in rows:
         lex = _lexical_score(query, chunk.content, chunk.section_heading)
         sem = cosine_similarity(query_vec, chunk.embedding)
-        scored_items.append((chunk, filename, doc_type, lex, sem))
+        scored_items.append((chunk, filename, doc_type, priv_status or "none", lex, sem))
 
-    lex_ranked = sorted(scored_items, key=lambda x: x[3], reverse=True)
-    sem_ranked = sorted(scored_items, key=lambda x: x[4], reverse=True)
+    lex_ranked = sorted(scored_items, key=lambda x: x[4], reverse=True)
+    sem_ranked = sorted(scored_items, key=lambda x: x[5], reverse=True)
 
     rrf_k = 60.0
     rrf_map: dict[uuid.UUID, float] = {}
@@ -290,6 +320,12 @@ async def hybrid_search(
             lexical_score=round(lex, 4),
             semantic_score=round(sem, 4),
             rrf_score=round(rrf_map[chunk.id], 6),
+            privilege_status=priv_status,
+            bates_number=(
+                str(chunk.metadata_json.get("bates_number"))
+                if (chunk.metadata_json or {}).get("bates_number")
+                else None
+            ),
         )
-        for chunk, filename, doc_type, lex, sem in ranked
+        for chunk, filename, doc_type, priv_status, lex, sem in ranked
     ]

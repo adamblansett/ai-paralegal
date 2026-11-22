@@ -1,8 +1,16 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+PrivilegeStatus = Literal[
+    "none",
+    "attorney_client",
+    "work_product",
+    "confidential",
+    "privileged_and_confidential",
+]
 
 
 class DocumentRead(BaseModel):
@@ -22,6 +30,12 @@ class DocumentRead(BaseModel):
     page_count: int
     word_count: int
     chunk_count: int
+    bates_start: str | None = None
+    bates_end: str | None = None
+    privilege_status: str = "none"
+    privilege_reason: str | None = None
+    pii_detected_count: int = 0
+    pii_summary_json: dict[str, Any] = Field(default_factory=dict)
     metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime
@@ -49,3 +63,28 @@ class DocumentUploadResponse(BaseModel):
     document: DocumentRead
     task_id: uuid.UUID
     ingestion_status: str
+
+
+class DocumentPrivilegeUpdate(BaseModel):
+    privilege_status: PrivilegeStatus
+    privilege_reason: str | None = Field(default=None, max_length=1000)
+
+
+class BatesStampRequest(BaseModel):
+    prefix: str = Field(
+        default="PROD",
+        min_length=1,
+        max_length=24,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    start_number: int = Field(default=1, ge=1, le=9_999_999)
+    zero_pad: int = Field(default=6, ge=4, le=10)
+    document_ids: list[uuid.UUID] | None = None
+
+
+class BatesStampResponse(BaseModel):
+    matter_id: uuid.UUID
+    prefix: str
+    stamped_count: int
+    next_number: int
+    documents: list[DocumentRead]

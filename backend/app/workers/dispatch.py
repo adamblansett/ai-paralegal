@@ -9,12 +9,13 @@ from app.db.session import get_session_factory
 from app.llm.embeddings import EmbeddingService
 from app.llm.router import ModelRouter
 from app.models.review_task import ReviewTask
-from app.services.contract_review import run_contract_review
+from app.services.contract_review import run_batch_contract_review, run_contract_review
 from app.services.discovery import run_discovery_synthesis
 from app.services.drafting import run_draft_generation
 from app.services.ingestion import process_document
 from app.storage.base import StorageBackend
 from app.workers.tasks import (
+    batch_contract_review_task,
     contract_review_task,
     discovery_synthesis_task,
     draft_generation_task,
@@ -228,6 +229,100 @@ async def dispatch_contract_review(
             )
         except Exception as exc:
             logger.error("inline_contract_review_failed", task_id=str(task.id), error=str(exc))
+
+
+async def _bg_batch_contract_review(
+    matter_id: uuid.UUID,
+    task_id: uuid.UUID,
+    document_ids: list[uuid.UUID] | None,
+    clause_types: list[str] | None,
+    playbook_notes: str | None,
+    playbook_id: uuid.UUID | None,
+    provider: str | None,
+    model: str | None,
+    router: ModelRouter,
+    settings: Settings,
+) -> None:
+    factory = get_session_factory(settings)
+    async with factory() as session:
+        try:
+            await run_batch_contract_review(
+                session,
+                router,
+                matter_id=matter_id,
+                task_id=task_id,
+                document_ids=document_ids,
+                clause_types=clause_types,
+                playbook_notes=playbook_notes,
+                playbook_id=playbook_id,
+                provider=provider,
+                model=model,
+                settings=settings,
+            )
+        except Exception as exc:
+            logger.error("background_batch_review_failed", task_id=str(task_id), error=str(exc))
+
+
+async def dispatch_batch_contract_review(
+    *,
+    session: AsyncSession,
+    settings: Settings,
+    background_tasks: BackgroundTasks,
+    router: ModelRouter,
+    matter_id: uuid.UUID,
+    task: ReviewTask,
+    document_ids: list[uuid.UUID] | None,
+    clause_types: list[str] | None,
+    playbook_notes: str | None,
+    playbook_id: uuid.UUID | None = None,
+    provider: str | None,
+    model: str | None,
+) -> None:
+    """Dispatch batch per-document contract review via Celery, BackgroundTasks, or inline."""
+    if settings.task_execution_mode == "celery":
+        async_result = batch_contract_review_task.delay(
+            str(matter_id),
+            str(task.id),
+            [str(d) for d in document_ids] if document_ids else None,
+            clause_types,
+            playbook_notes,
+            str(playbook_id) if playbook_id else None,
+            provider,
+            model,
+        )
+        task.celery_task_id = str(async_result.id)
+        await session.commit()
+    elif settings.task_execution_mode == "background":
+        background_tasks.add_task(
+            _bg_batch_contract_review,
+            matter_id,
+            task.id,
+            document_ids,
+            clause_types,
+            playbook_notes,
+            playbook_id,
+            provider,
+            model,
+            router,
+            settings,
+        )
+    else:
+        try:
+            await run_batch_contract_review(
+                session,
+                router,
+                matter_id=matter_id,
+                task_id=task.id,
+                document_ids=document_ids,
+                clause_types=clause_types,
+                playbook_notes=playbook_notes,
+                playbook_id=playbook_id,
+                provider=provider,
+                model=model,
+                settings=settings,
+            )
+        except Exception as exc:
+            logger.error("inline_batch_review_failed", task_id=str(task.id), error=str(exc))
 
 
 async def dispatch_discovery_synthesis(

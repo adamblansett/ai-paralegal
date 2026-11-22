@@ -8,10 +8,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.disclaimer import LEGAL_DISCLAIMER
+from app.models.document import Document
 from app.models.finding import ExtractedFinding
 from app.models.matter import Matter
+from app.services.contract_review import build_portfolio_risk_matrix
+from app.services.redline_export import (
+    DOCX_MIME,
+    build_ooxml_docx,
+    docx_paragraph,
+    docx_table,
+)
 
 ExportFormat = Literal["csv", "json", "markdown"]
+PrivilegeExportFormat = Literal["csv", "json", "markdown", "docx"]
 
 
 def _format_citations_brief(citations: list[dict[str, Any]]) -> str:
@@ -224,3 +233,218 @@ async def export_chronology(
             ]
         )
     return buf.getvalue(), "text/csv", f"{slug}_chronology.csv"
+
+
+async def export_privilege_log(
+    session: AsyncSession,
+    *,
+    matter_id: uuid.UUID,
+    fmt: PrivilegeExportFormat = "csv",
+) -> tuple[bytes | str, str, str]:
+    """Export privilege log entries for all privileged/confidential matter documents."""
+    matter = await session.get(Matter, matter_id)
+    if matter is None:
+        raise ValueError(f"Matter {matter_id} not found.")
+
+    stmt = (
+        select(Document)
+        .where(
+            Document.matter_id == matter_id,
+            Document.privilege_status != "none",
+        )
+        .order_by(Document.bates_start.asc(), Document.created_at.asc())
+    )
+    docs = list((await session.execute(stmt)).scalars().all())
+    slug = matter.matter_number.lower().replace(" ", "_")
+
+    def _bates_range(d: Document) -> str:
+        if d.bates_start and d.bates_end:
+            return f"{d.bates_start} - {d.bates_end}"
+        return d.bates_start or "Unstamped"
+
+    if fmt == "json":
+        payload = {
+            "matter": {
+                "id": str(matter.id),
+                "matter_number": matter.matter_number,
+                "title": matter.title,
+            },
+            "disclaimer": LEGAL_DISCLAIMER,
+            "entries": [
+                {
+                    "document_id": str(d.id),
+                    "bates_range": _bates_range(d),
+                    "filename": d.filename,
+                    "document_type": d.document_type,
+                    "privilege_status": d.privilege_status,
+                    "privilege_reason": d.privilege_reason or "",
+                    "pii_detected_count": d.pii_detected_count,
+                    "page_count": d.page_count,
+                    "sha256_hash": d.sha256_hash,
+                }
+                for d in docs
+            ],
+        }
+        return json.dumps(payload, indent=2), "application/json", f"{slug}_privilege_log.json"
+
+    if fmt == "markdown":
+        lines = [
+            f"# Privilege Log: {matter.title} ({matter.matter_number})",
+            "",
+            f"> **Disclaimer:** {LEGAL_DISCLAIMER}",
+            "",
+            "| Bates Range | Document | Type | Privilege Basis | "
+            "Reason / Description | PII Count | Pages |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for d in docs:
+            reason = (d.privilege_reason or "").replace("|", "\\|").replace("\n", " ")
+            lines.append(
+                f"| {_bates_range(d)} | {d.filename.replace('|', '\\|')} | {d.document_type} | "
+                f"{d.privilege_status} | {reason} | {d.pii_detected_count} | {d.page_count} |"
+            )
+        return "\n".join(lines), "text/markdown", f"{slug}_privilege_log.md"
+
+    if fmt == "docx":
+        body_xml = [
+            docx_paragraph(
+                f"Privilege Log: {matter.title} ({matter.matter_number})",
+                bold=True,
+                size=28,
+            ),
+            docx_paragraph(
+                f"Client: {matter.client_name} | Total Privileged Documents: {len(docs)}",
+                color="475569",
+                size=18,
+            ),
+            docx_paragraph(f"LEGAL NOTICE: {LEGAL_DISCLAIMER}", bold=True, color="92400E", size=16),
+        ]
+        if not docs:
+            body_xml.append(
+                docx_paragraph(
+                    "No documents are currently marked as privileged or confidential.",
+                    size=18,
+                )
+            )
+        else:
+            headers = [
+                "Bates Range",
+                "Filename",
+                "Privilege Basis",
+                "Reason / Basis",
+                "PII",
+                "Pages",
+            ]
+            table_rows = [
+                [
+                    _bates_range(d),
+                    d.filename,
+                    d.privilege_status.replace("_", " ").title(),
+                    d.privilege_reason or "Counsel designation",
+                    str(d.pii_detected_count),
+                    str(d.page_count),
+                ]
+                for d in docs
+            ]
+            body_xml.append(
+                docx_table(
+                    headers,
+                    table_rows,
+                    col_widths=[1600, 1900, 1600, 2660, 800, 800],
+                )
+            )
+        return build_ooxml_docx(body_xml), DOCX_MIME, f"{slug}_privilege_log.docx"
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "Bates Range",
+            "Document ID",
+            "Filename",
+            "Document Type",
+            "Privilege Basis",
+            "Privilege Reason",
+            "PII Detected Count",
+            "Pages",
+            "SHA-256",
+        ]
+    )
+    for d in docs:
+        writer.writerow(
+            [
+                _bates_range(d),
+                str(d.id),
+                d.filename,
+                d.document_type,
+                d.privilege_status,
+                d.privilege_reason or "",
+                d.pii_detected_count,
+                d.page_count,
+                d.sha256_hash,
+            ]
+        )
+    return buf.getvalue(), "text/csv", f"{slug}_privilege_log.csv"
+
+
+async def export_risk_matrix(
+    session: AsyncSession,
+    *,
+    matter_id: uuid.UUID,
+    fmt: Literal["csv", "json"] = "csv",
+) -> tuple[str, str, str]:
+    """Export portfolio contract risk matrix (documents × clause categories)."""
+    matter = await session.get(Matter, matter_id)
+    if matter is None:
+        raise ValueError(f"Matter {matter_id} not found.")
+
+    matrix = await build_portfolio_risk_matrix(session, matter_id=matter_id)
+    slug = matter.matter_number.lower().replace(" ", "_")
+
+    if fmt == "json":
+        payload = {
+            "matter": {
+                "id": str(matter.id),
+                "matter_number": matter.matter_number,
+                "title": matter.title,
+            },
+            "disclaimer": LEGAL_DISCLAIMER,
+            "matrix": matrix.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2), "application/json", f"{slug}_risk_matrix.json"
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "Document",
+            "Bates Range",
+            "Privilege",
+            "Overall Risk",
+            "Findings",
+            "Escalated",
+            *[c.replace("_", " ").title() for c in matrix.categories],
+        ]
+    )
+    for row in matrix.rows:
+        cell_cols = []
+        for cat in matrix.categories:
+            cell = row.cells.get(cat)
+            if cell is None:
+                cell_cols.append("—")
+            else:
+                cell_cols.append(
+                    f"{cell.severity.upper()} ({cell.finding_count}/{cell.review_status})"
+                )
+        writer.writerow(
+            [
+                row.filename,
+                row.bates_range or "",
+                row.privilege_status,
+                row.overall_risk,
+                row.finding_count,
+                row.escalated_count,
+                *cell_cols,
+            ]
+        )
+    return buf.getvalue(), "text/csv", f"{slug}_risk_matrix.csv"

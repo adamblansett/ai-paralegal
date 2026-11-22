@@ -33,8 +33,29 @@ class UserRead(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
+    expires_in: int = 28800
     token_type: str = "bearer"
     user: UserRead
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=16, max_length=512)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = Field(default=None, max_length=512)
+
+
+class AuthProvidersResponse(BaseModel):
+    local_enabled: bool = True
+    oidc_enabled: bool = False
+    oidc_issuer_url: str | None = None
+    oidc_client_id: str | None = None
+
+
+class OIDCExchangeRequest(BaseModel):
+    id_token: str = Field(..., min_length=10)
 
 
 class MatterMemberAdd(BaseModel):

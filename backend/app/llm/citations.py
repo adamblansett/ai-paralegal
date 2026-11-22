@@ -2,6 +2,7 @@ import re
 from difflib import SequenceMatcher
 
 from app.core.config import Settings
+from app.core.metrics import metrics_registry
 from app.llm.types import RawCitation, SourceChunkContext, VerifiedCitation
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -74,6 +75,7 @@ def verify_citations(
                     break
 
         if chunk is None:
+            metrics_registry.record_grounding_failure()
             verified.append(
                 VerifiedCitation(
                     chunk_id=raw.chunk_id or "unknown",
@@ -127,6 +129,7 @@ def verify_citations(
                 )
             )
         else:
+            metrics_registry.record_grounding_failure()
             verified.append(
                 VerifiedCitation(
                     chunk_id=chunk.chunk_id,

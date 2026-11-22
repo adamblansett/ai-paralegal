@@ -4,11 +4,13 @@ import json
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+import httpx
+from pydantic import BaseModel, Field
 
 from app.core.config import Settings, get_settings
+from app.core.metrics import estimate_llm_cost_usd
 from app.llm.citations import compute_grounding_score, evaluate_escalation, verify_citations
 from app.llm.prompts import (
     PROMPT_VERSION,
@@ -17,7 +19,8 @@ from app.llm.prompts import (
     build_discovery_synthesis_prompt,
     build_research_qa_prompt,
 )
-from app.llm.router import ModelRouter
+from app.llm.providers.base import ProviderError
+from app.llm.router import DEFAULT_TASK_MODELS, ModelRouter
 from app.llm.types import (
     ContractReviewLLMOutput,
     DiscoverySynthesisLLMOutput,
@@ -59,6 +62,23 @@ class EvaluationReport(BaseModel):
     json_validity_rate: float
     avg_latency_ms: float
     cases: list[CaseMetric]
+
+
+class ModelComparisonRow(BaseModel):
+    target: str
+    provider: str
+    model: str
+    status: Literal["completed", "skipped", "error"]
+    skip_reason: str | None = None
+    report: EvaluationReport | None = None
+    composite_score: float = 0.0
+    estimated_cost_usd: float = 0.0
+
+
+class ComparisonBenchmarkReport(BaseModel):
+    dataset_version: str
+    results: list[ModelComparisonRow]
+    recommended_routing: dict[str, str] = Field(default_factory=dict)
 
 
 def _load_sample_chunks(filenames: list[str]) -> list[SourceChunkContext]:
@@ -366,13 +386,210 @@ def format_markdown_report(report: EvaluationReport) -> str:
     return "\n".join(lines)
 
 
+def _compute_composite_score(report: EvaluationReport) -> float:
+    score = (
+        0.25 * report.clause_recall
+        + 0.15 * report.risk_recall
+        + 0.15 * report.contradiction_recall
+        + 0.25 * report.citation_grounding_rate
+        + 0.10 * report.hallucination_catch_rate
+        + 0.10 * report.json_validity_rate
+    )
+    return round(score, 3)
+
+
+async def probe_live_targets(settings: Settings | None = None) -> list[tuple[str, str]]:
+    """Discover reachable Ollama models & configured Gemini models plus offline mock baseline."""
+    cfg = settings or get_settings()
+    targets: list[tuple[str, str]] = [("mock", "mock-legal-deterministic-v1")]
+
+    # Probe local Ollama server with short timeout
+    tags_url = f"{cfg.ollama_base_url.rstrip('/')}/api/tags"
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(tags_url)
+            if resp.status_code == 200:
+                models = [
+                    str(m.get("name"))
+                    for m in resp.json().get("models", [])
+                    if isinstance(m, dict) and m.get("name")
+                ]
+                for mod in models[:4]:
+                    targets.append(("ollama", mod))
+    except Exception:
+        pass
+
+    if not any(prov == "ollama" for prov, _ in targets):
+        targets.append(("ollama", cfg.ollama_default_model))
+
+    if cfg.gemini_api_key:
+        targets.append(("gemini", cfg.gemini_default_model))
+    else:
+        targets.append(("gemini", cfg.gemini_default_model))
+
+    return targets
+
+
+async def run_comparison_benchmark(
+    targets: list[tuple[str, str]],
+    *,
+    settings: Settings | None = None,
+) -> ComparisonBenchmarkReport:
+    """Run benchmarks across multiple `(provider, model)` pairs, skipping unconfigured ones."""
+    cfg = settings or get_settings()
+    dataset = json.loads(DATASET_PATH.read_text(encoding="utf-8"))
+    rows: list[ModelComparisonRow] = []
+
+    for prov, mod in targets:
+        target_label = f"{prov}:{mod}"
+        if prov == "gemini" and not cfg.gemini_api_key:
+            rows.append(
+                ModelComparisonRow(
+                    target=target_label,
+                    provider=prov,
+                    model=mod,
+                    status="skipped",
+                    skip_reason="GEMINI_API_KEY not configured",
+                )
+            )
+            continue
+
+        try:
+            report = await run_benchmark(provider=prov, model=mod, settings=cfg)
+            est_cost = round(
+                estimate_llm_cost_usd(prov, mod, 3500 * len(report.cases), 900 * len(report.cases)),
+                6,
+            )
+            rows.append(
+                ModelComparisonRow(
+                    target=target_label,
+                    provider=prov,
+                    model=mod,
+                    status="completed",
+                    report=report,
+                    composite_score=_compute_composite_score(report),
+                    estimated_cost_usd=est_cost,
+                )
+            )
+        except ProviderError as exc:
+            rows.append(
+                ModelComparisonRow(
+                    target=target_label,
+                    provider=prov,
+                    model=mod,
+                    status="skipped",
+                    skip_reason=str(exc),
+                )
+            )
+        except Exception as exc:
+            rows.append(
+                ModelComparisonRow(
+                    target=target_label,
+                    provider=prov,
+                    model=mod,
+                    status="error",
+                    skip_reason=str(exc),
+                )
+            )
+
+    completed_non_mock = [r for r in rows if r.status == "completed" and r.provider != "mock"]
+    best_live = (
+        max(completed_non_mock, key=lambda r: r.composite_score)
+        if completed_non_mock
+        else next((r for r in rows if r.status == "completed"), None)
+    )
+    recommended: dict[str, str] = {}
+    for task_kind, defaults in DEFAULT_TASK_MODELS.items():
+        if best_live is not None and best_live.provider != "mock":
+            recommended[task_kind] = best_live.target
+        else:
+            default_ollama = defaults.get("ollama", cfg.ollama_default_model)
+            recommended[task_kind] = f"ollama:{default_ollama} (fallback: mock)"
+
+    return ComparisonBenchmarkReport(
+        dataset_version=str(dataset.get("version", "1.0")),
+        results=rows,
+        recommended_routing=recommended,
+    )
+
+
+def format_comparison_markdown(comp: ComparisonBenchmarkReport) -> str:
+    """Format multi-model comparison scorecard as Markdown."""
+    lines = [
+        f"# AI Paralegal Multi-Model Evaluation Scorecard (Dataset v{comp.dataset_version})",
+        "",
+        "| Target | Status | Composite | Clause Recall | Grounding | Hallucination Catch | "
+        "Avg Latency | Notes |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for r in comp.results:
+        if r.status == "completed" and r.report is not None:
+            rep = r.report
+            lines.append(
+                f"| `{r.target}` | completed | {r.composite_score:.1%} | "
+                f"{rep.clause_recall:.1%} | {rep.citation_grounding_rate:.1%} | "
+                f"{rep.hallucination_catch_rate:.1%} | {rep.avg_latency_ms:.1f} ms | "
+                f"Est. ${r.estimated_cost_usd:.4f} |"
+            )
+        else:
+            note = (r.skip_reason or "unavailable").replace("|", "\\|")[:80]
+            lines.append(f"| `{r.target}` | {r.status} | — | — | — | — | — | {note} |")
+
+    lines.extend(["", "## Recommended Per-Task Routing Defaults", ""])
+    for task_kind, chosen in comp.recommended_routing.items():
+        lines.append(f"- `{task_kind}` -> `{chosen}`")
+    return "\n".join(lines)
+
+
+def _parse_compare_targets(raw: str) -> list[tuple[str, str]]:
+    parsed: list[tuple[str, str]] = []
+    for item in raw.split(","):
+        cleaned = item.strip()
+        if not cleaned:
+            continue
+        if ":" in cleaned:
+            prov, mod = cleaned.split(":", 1)
+            parsed.append((prov.strip().lower(), mod.strip()))
+        else:
+            parsed.append((cleaned.lower(), "default"))
+    return parsed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run AI Paralegal LLM evaluation benchmarks.")
     parser.add_argument("--provider", default="mock", choices=["mock", "ollama", "gemini"])
     parser.add_argument("--model", default=None)
+    parser.add_argument(
+        "--compare",
+        default=None,
+        help="Comma-separated provider:model targets (e.g., mock:default,ollama:qwen-2.5-7b)",
+    )
+    parser.add_argument(
+        "--probe-live",
+        action="store_true",
+        help="Auto-probe live Ollama and Gemini models alongside offline mock baseline.",
+    )
     parser.add_argument("--output", default=None, help="Optional JSON report output path.")
     parser.add_argument("--markdown", action="store_true", help="Print Markdown summary table.")
     args = parser.parse_args(argv)
+
+    if args.probe_live or args.compare:
+        targets = (
+            _parse_compare_targets(args.compare)
+            if args.compare
+            else asyncio.run(probe_live_targets())
+        )
+        comp = asyncio.run(run_comparison_benchmark(targets))
+        if args.output:
+            Path(args.output).write_text(comp.model_dump_json(indent=2), encoding="utf-8")
+        if args.markdown:
+            print(format_comparison_markdown(comp))
+        else:
+            print(comp.model_dump_json(indent=2))
+        completed = [r for r in comp.results if r.status == "completed"]
+        if not completed:
+            return 1
+        return 0 if all(all(c.passed for c in r.report.cases) for r in completed if r.report) else 1
 
     report = asyncio.run(run_benchmark(provider=args.provider, model=args.model))
     if args.output:

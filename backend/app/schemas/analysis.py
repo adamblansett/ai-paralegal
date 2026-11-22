@@ -113,3 +113,41 @@ class ReviewTaskRead(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class BatchContractReviewRequest(BaseModel):
+    document_ids: list[uuid.UUID] | None = None
+    clause_types: list[str] | None = None
+    playbook_notes: str | None = None
+    playbook_id: uuid.UUID | None = None
+    provider: Literal["mock", "ollama", "gemini"] | None = None
+    model: str | None = None
+
+
+class MatrixCellRead(BaseModel):
+    severity: str
+    finding_count: int
+    review_status: str
+    escalated: bool
+    finding_ids: list[uuid.UUID] = Field(default_factory=list)
+    top_title: str | None = None
+
+
+class MatrixDocumentRowRead(BaseModel):
+    document_id: uuid.UUID
+    filename: str
+    bates_range: str | None = None
+    privilege_status: str = "none"
+    overall_risk: str = "info"
+    finding_count: int = 0
+    escalated_count: int = 0
+    cells: dict[str, MatrixCellRead] = Field(default_factory=dict)
+
+
+class PortfolioRiskMatrixResponse(BaseModel):
+    matter_id: uuid.UUID
+    categories: list[str]
+    rows: list[MatrixDocumentRowRead]
+    total_documents: int
+    total_findings: int
+    high_risk_documents: int

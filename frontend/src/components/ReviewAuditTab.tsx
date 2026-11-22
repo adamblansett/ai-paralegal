@@ -10,13 +10,20 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { api } from '../api/client';
-import type { AuditLogEntry, ExtractedFinding, ReviewStatus, UserProfile } from '../types/api';
+import type {
+  AuditLogEntry,
+  ExtractedFinding,
+  ReviewStatus,
+  UserProfile,
+  VerifiedCitation,
+} from '../types/api';
 import { CitationBadge } from './CitationBadge';
 
 interface ReviewAuditTabProps {
   findings: ExtractedFinding[];
   auditLogs: AuditLogEntry[];
   currentUser: UserProfile;
+  onInspectCitation?: (citation: VerifiedCitation) => void;
   onRefresh: () => Promise<void>;
 }
 
@@ -30,6 +37,7 @@ export function ReviewAuditTab({
   findings,
   auditLogs,
   currentUser,
+  onInspectCitation,
   onRefresh,
 }: ReviewAuditTabProps) {
   const [view, setView] = useState<'queue' | 'audit'>('queue');
@@ -354,7 +362,12 @@ export function ReviewAuditTab({
                     {finding.citations_json.length > 0 && (
                       <div className="space-y-1.5">
                         {finding.citations_json.map((c, idx) => (
-                          <CitationBadge key={`${finding.id}-rq-${idx}`} citation={c} index={idx} />
+                          <CitationBadge
+                            key={`${finding.id}-rq-${idx}`}
+                            citation={c}
+                            index={idx}
+                            onInspectCitation={onInspectCitation}
+                          />
                         ))}
                       </div>
                     )}

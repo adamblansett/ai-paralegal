@@ -18,7 +18,9 @@ def test_alembic_upgrade_head_creates_all_core_tables(tmp_path: Path) -> None:
 
     sync_engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     try:
-        tables = set(inspect(sync_engine).get_table_names())
+        inspector = inspect(sync_engine)
+        tables = set(inspector.get_table_names())
+        doc_columns = {col["name"] for col in inspector.get_columns("documents")}
     finally:
         sync_engine.dispose()
 
@@ -32,5 +34,15 @@ def test_alembic_upgrade_head_creates_all_core_tables(tmp_path: Path) -> None:
         "users",
         "matter_memberships",
         "playbooks",
+        "refresh_tokens",
+        "revoked_tokens",
     }
     assert expected.issubset(tables)
+    assert {
+        "bates_start",
+        "bates_end",
+        "privilege_status",
+        "privilege_reason",
+        "pii_detected_count",
+        "pii_summary_json",
+    }.issubset(doc_columns)

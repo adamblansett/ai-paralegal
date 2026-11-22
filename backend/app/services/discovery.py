@@ -23,6 +23,7 @@ from app.llm.types import (
 from app.models.finding import ExtractedFinding
 from app.models.review_task import ReviewTask
 from app.services.audit import record_audit_log
+from app.services.events import event_bus
 from app.services.retrieval import (
     chunks_to_source_contexts,
     hybrid_search,
@@ -281,6 +282,16 @@ async def run_discovery_synthesis(
 
         await session.commit()
         await session.refresh(task)
+        event_bus.publish(
+            matter_id,
+            "task_completed",
+            {
+                "task_id": str(task.id),
+                "task_type": "discovery_synthesis",
+                "status": "completed",
+                "finding_count": len(created_finding_ids),
+            },
+        )
         return task
     except Exception as exc:
         await session.rollback()
@@ -290,6 +301,16 @@ async def run_discovery_synthesis(
             failed_task.error_message = str(exc)
             failed_task.completed_at = datetime.now(UTC)
             await session.commit()
+        event_bus.publish(
+            matter_id,
+            "task_failed",
+            {
+                "task_id": str(task_id),
+                "task_type": "discovery_synthesis",
+                "status": "failed",
+                "error_message": str(exc),
+            },
+        )
         raise
 
 

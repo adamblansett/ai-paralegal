@@ -11,15 +11,14 @@ Production-ready legal operations platform for legal document ingestion (includi
 
 ### Tech Stack
 - **Backend:** Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2.x (async), Alembic migrations, Celery + Redis
-- **Auth & RBAC:** PBKDF2-HMAC-SHA256 + HS256 JWT bearer authentication (`users`, `matter_memberships`), matter-level isolation, firm roles (`partner`, `associate`, `paralegal`, `auditor`), and authoritative cryptographic actor/reviewer attribution
+- **Auth, RBAC & Session Hardening:** PBKDF2-HMAC-SHA256 + HS256 JWT bearer authentication with rotated **refresh tokens** (`POST /auth/refresh` + replay attack detection), immediate **JWT logout revocation** (`POST /auth/logout` jti denylist), enterprise OIDC/SSO exchange (`GET /auth/providers`, `POST /auth/oidc/exchange`), matter-level isolation (`users`, `matter_memberships`), firm roles (`partner`, `associate`, `paralegal`, `auditor`), and authoritative cryptographic actor/reviewer attribution
 - **Database & Retrieval:** PostgreSQL 16 + `pgvector` (HNSW semantic index + GIN `tsvector` full-text search fused with Reciprocal Rank Fusion) with SQLite dual-dialect support for local dev & offline tests
-- **Ingestion & OCR:** Parsers for PDF, DOCX, TXT, MD, EML threads, and transcripts, plus pluggable `OCRService` (`tesseract-ocr` + `poppler-utils` in Docker, `mock`, or `disabled`) for image-only scanned PDFs
-- **Playbooks & Redlines:** Reusable contract playbooks (`playbooks` table with seeded Commercial SaaS/MSA baseline rules + fallback clause text) and native OOXML Word `.docx` Track Changes (`<w:del>` / `<w:ins>`) redline export
-- **LLM Layer:** Provider-agnostic `ModelRouter` supporting:
-  - **Local Ollama:** `llama-3.1-8b-instruct`, `qwen-2.5-7b-instruct`, `mistral-nemo-12b`, `deepseek-r1-distill-qwen-8b` (with `<think>` trace stripping)
-  - **Cloud Google Gemini:** `gemini-2.5-flash`, `gemini-2.5-pro` via structured JSON mode
-  - **Deterministic Offline Mock:** document-aware provider producing verifiable citations without external API keys
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS
+- **Ingestion, OCR & Source Viewer:** Parsers for PDF, DOCX, TXT, MD, EML threads, and transcripts, upload hardening (extension allowlist, streaming size limit, PDF/DOCX magic-byte verification), pluggable `OCRService` (`tesseract-ocr` + `poppler-utils` in Docker, `mock`, or `disabled`), and interactive **Click-to-Verify Source Viewer** drawer (`GET /documents/{id}/content`) with span scroll & quote highlighting
+- **Legal-Ops Safety & Production:** Automated PII detection (`ssn`, `ein`, `email`, `phone`, `bank_account`, Luhn `credit_card`) and privilege classification (`attorney_client`, `work_product`, `confidential`, `privileged_and_confidential`), outbound cloud LLM guardrails (blocks privileged material from cloud providers, redacts PII before Gemini calls), sequential page-level **Bates Stamping** (`POST /matters/{id}/documents/bates-stamp`), and **Privilege Log** export (CSV, JSON, Markdown, DOCX)
+- **Playbooks, Risk Matrix & Live SSE:** Reusable contract playbooks (`playbooks` table), native OOXML Word `.docx` Track Changes (`<w:del>` / `<w:ins>`) redline export, batch **Portfolio Risk Matrix** (`POST /matters/{id}/analyses/batch-contract-review`, `GET /matters/{id}/analyses/risk-matrix`), and live Server-Sent Events (`GET /matters/{id}/events`)
+- **Observability & Rate Limiting:** Pure ASGI security headers, `X-Request-ID` tracing, sliding-window rate limits on auth & LLM routes, and Prometheus metrics (`GET /metrics`, `GET /api/v1/telemetry/summary`)
+- **LLM Layer:** Provider-agnostic `ModelRouter` supporting per-task model routing (`DEFAULT_TASK_MODELS` / `LLM_TASK_ROUTING_JSON`) across local Ollama (`llama-3.1-8b-instruct`, `qwen-2.5-7b-instruct`, `mistral-nemo-12b`, `deepseek-r1-distill-qwen-8b`), cloud Google Gemini (`gemini-2.5-flash`, `gemini-2.5-pro`), and deterministic offline mock mode
+- **Frontend & Tests:** React 18, TypeScript, Vite, Tailwind CSS, Vitest + React Testing Library unit suite, and Playwright E2E workflow suite
 
 ### Repository Layout
 
@@ -38,28 +37,34 @@ ai-paralegal/
 │   ├── pyproject.toml
 │   ├── alembic/versions/
 │   │   ├── 0001_initial_schema.py
-│   │   └── 0002_auth_playbooks_rbac.py
+│   │   ├── 0002_auth_playbooks_rbac.py
+│   │   └── 0003_privilege_bates_tokens.py
 │   ├── app/
 │   │   ├── main.py
-│   │   ├── core/            # Settings, PBKDF2/JWT security, logging, legal disclaimers
+│   │   ├── core/            # Settings, PBKDF2/JWT/refresh security, rate limiting, Prometheus metrics, ASGI middleware, disclaimers
 │   │   ├── db/              # Async SQLAlchemy session, dual pgvector/SQLite types
-│   │   ├── models/          # matters, documents, document_chunks, review_tasks, extracted_findings, audit_logs, users, matter_memberships, playbooks
+│   │   ├── models/          # matters, documents, document_chunks, review_tasks, extracted_findings, audit_logs, users, matter_memberships, playbooks, refresh_tokens, revoked_tokens
 │   │   ├── schemas/         # Pydantic v2 API contracts
 │   │   ├── storage/         # Local & S3-compatible object storage
-│   │   ├── llm/             # ModelRouter, Ollama/Gemini/Mock adapters, prompts, citation verifier, embeddings
-│   │   ├── services/        # Parsers, OCR, chunker, playbooks, redline .docx export, hybrid search, contract review, discovery, drafting, exports, audit, seed
+│   │   ├── llm/             # ModelRouter (with per-task defaults & cloud guardrails), Ollama/Gemini/Mock adapters, prompts, citation verifier, embeddings
+│   │   ├── services/        # Parsers, OCR, guardrails (PII/privilege), production (Bates), SSE events, chunker, playbooks, redline .docx export, hybrid search, contract review & risk matrix, discovery, drafting, exports, audit, seed
 │   │   ├── workers/         # Celery app, background tasks, execution-mode dispatcher
-│   │   └── api/v1/          # FastAPI routes (auth, playbooks, matters/members, documents, analyses, findings, audit, exports)
-│   ├── evals/               # Benchmark dataset & runner measuring recall, grounding & hallucination catch rate
+│   │   └── api/v1/          # FastAPI routes (auth, playbooks, matters/members, documents, analyses, findings, audit, exports, events, metrics)
+│   ├── evals/               # Multi-model benchmark dataset, scorecard, & runner (`--probe-live`, `--compare`)
 │   └── tests/               # Offline pytest suite + live PostgreSQL pgvector integration test
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf
     ├── package.json
+    ├── vitest.config.ts
+    ├── playwright.config.ts
+    ├── e2e/                 # Playwright end-to-end legal-ops suite
     └── src/
         ├── api/client.ts
+        ├── hooks/           # useMatterEvents (SSE auto-refresh)
         ├── types/api.ts
-        └── components/      # AuthGate, MatterSidebar, TeamAccessModal, PlaybookModal, DocumentsTab, ContractReviewTab, DiscoveryDraftingTab, ReviewAuditTab
+        ├── test/            # Vitest + React Testing Library specs
+        └── components/      # AuthGate, SourceViewerDrawer, MatterSidebar, TeamAccessModal, PlaybookModal, DocumentsTab, ContractReviewTab (Findings + Risk Matrix), DiscoveryDraftingTab, ReviewAuditTab
 ```
 
 ---
@@ -139,26 +144,27 @@ Two legal fixtures are provided in `samples/`:
 
 ## Evaluation Benchmarks (`backend/evals`)
 
-Measure clause recall, risk detection, contradiction/omission recall, citation grounding, and adversarial hallucination detection against `backend/evals/dataset.json`:
+Measure clause recall, risk detection, contradiction/omission recall, citation grounding, and adversarial hallucination detection against `backend/evals/dataset.json` (see [backend/evals/BENCHMARKS.md](backend/evals/BENCHMARKS.md)):
 
 ```bash
 cd backend
 python -m evals.runner --provider mock --markdown
-# Test against live Ollama or Gemini:
-# python -m evals.runner --provider ollama --model llama-3.1-8b-instruct --markdown
-# python -m evals.runner --provider gemini --model gemini-2.5-flash --markdown
+# Auto-probe local Ollama + configured Gemini alongside offline mock baseline:
+python -m evals.runner --probe-live --markdown
+# Explicit multi-model comparison:
+# python -m evals.runner --compare "mock:default,ollama:qwen-2.5-7b-instruct,gemini:gemini-2.5-flash" --markdown
 ```
 
 ---
 
 ## Verification, CI & Quality Checks
 
-GitHub Actions CI (`.github/workflows/ci.yml`) runs backend lint/typecheck/unit/evals, live PostgreSQL `pgvector` + Redis integration tests, frontend build, and Docker Compose validation on every push and PR.
+GitHub Actions CI (`.github/workflows/ci.yml`) runs backend lint/typecheck/unit/evals, live PostgreSQL `pgvector` + Redis integration tests, frontend Vitest unit tests + build, Playwright E2E browser workflows, and Docker Compose validation on every push and PR.
 
 ### Backend Tests, Linting & Type Checking
 ```bash
 cd backend
-pytest -v
+pytest -v -m "not integration"
 # With live PostgreSQL + pgvector:
 # set POSTGRES_TEST_URL=postgresql+asyncpg://paralegal:paralegal@localhost:5432/ai_paralegal_test
 # pytest -v -m integration
@@ -166,9 +172,13 @@ ruff check app tests alembic evals
 mypy app evals
 ```
 
-### Frontend Typecheck & Production Build
+### Frontend Typecheck, Unit Tests, E2E & Production Build
 ```bash
 cd frontend
 npx tsc --noEmit
+npm run test
 npm run build
+# Playwright E2E (auto-starts FastAPI + Vite against isolated temp DB):
+npx playwright install chromium
+npm run test:e2e
 ```

@@ -64,7 +64,26 @@ class Settings(BaseSettings):
     # Authentication & RBAC
     auth_secret_key: str = "dev-insecure-secret-change-in-production-32bytes"
     auth_token_expire_minutes: int = Field(default=480, ge=5, le=43200)
+    auth_refresh_token_expire_days: int = Field(default=14, ge=1, le=90)
     auth_auto_seed_demo_users: bool = True
+    oidc_enabled: bool = False
+    oidc_issuer_url: str = ""
+    oidc_client_id: str = ""
+    oidc_audience: str = ""
+
+    # Upload Hardening & Outbound Cloud Guardrails
+    max_upload_size_mb: int = Field(default=25, ge=1, le=500)
+    allowed_upload_extensions: str = ".pdf,.docx,.txt,.md,.eml,.vtt,.srt"
+    llm_redact_pii_for_cloud: bool = True
+    llm_block_privileged_for_cloud: bool = True
+    llm_task_routing_json: str = ""
+
+    # Rate Limiting & Observability
+    rate_limit_enabled: bool = True
+    rate_limit_auth_per_minute: int = Field(default=120, ge=1, le=10000)
+    rate_limit_llm_per_minute: int = Field(default=120, ge=1, le=10000)
+    otel_enabled: bool = False
+    otel_service_name: str = "ai-paralegal-api"
 
     # OCR / Scanned PDF Pipeline
     ocr_backend: Literal["auto", "tesseract", "mock", "disabled"] = "auto"
@@ -87,6 +106,18 @@ class Settings(BaseSettings):
         return [
             item.strip().lower() for item in self.llm_fallback_providers.split(",") if item.strip()
         ]
+
+    @property
+    def max_upload_size_bytes(self) -> int:
+        return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def allowed_upload_extension_set(self) -> set[str]:
+        return {
+            ext.strip().lower()
+            for ext in self.allowed_upload_extensions.split(",")
+            if ext.strip()
+        }
 
 
 @lru_cache(maxsize=1)

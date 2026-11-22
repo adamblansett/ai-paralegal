@@ -6,9 +6,12 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.metrics import prometheus_metrics_endpoint
 from app.api.v1.router import api_v1_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.core.middleware import SecurityAndObservabilityMiddleware
+from app.core.rate_limit import SlidingWindowRateLimiter
 from app.db.session import dispose_engine, get_session_factory
 from app.services.seed import seed_defaults
 
@@ -45,6 +48,8 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.state.rate_limiter = SlidingWindowRateLimiter()
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_origin_list,
@@ -52,7 +57,9 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(SecurityAndObservabilityMiddleware, settings=cfg)
 
+    app.add_api_route("/metrics", prometheus_metrics_endpoint, methods=["GET"], tags=["telemetry"])
     app.include_router(api_v1_router, prefix=cfg.api_v1_prefix)
     return app
 

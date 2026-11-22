@@ -13,14 +13,17 @@ from app.api.deps import (
     require_matter_access,
 )
 from app.core.config import Settings
+from app.core.rate_limit import rate_limit_llm
 from app.llm.embeddings import EmbeddingService
 from app.llm.router import ModelRouter
 from app.models.review_task import ReviewTask
 from app.models.user import User
 from app.schemas.analysis import (
+    BatchContractReviewRequest,
     ContractReviewRequest,
     DiscoverySynthesisRequest,
     DraftRequest,
+    PortfolioRiskMatrixResponse,
     ResearchQueryRequest,
     ResearchQueryResponse,
     ReviewTaskRead,
@@ -28,9 +31,11 @@ from app.schemas.analysis import (
     SearchRequest,
     SearchResponse,
 )
+from app.services.contract_review import build_portfolio_risk_matrix
 from app.services.discovery import run_research_query
 from app.services.retrieval import hybrid_search
 from app.workers.dispatch import (
+    dispatch_batch_contract_review,
     dispatch_contract_review,
     dispatch_discovery_synthesis,
     dispatch_draft_generation,
@@ -43,6 +48,7 @@ router = APIRouter(tags=["analyses"])
     "/matters/{matter_id}/analyses/contract-review",
     response_model=ReviewTaskRead,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(rate_limit_llm)],
 )
 async def trigger_contract_review(
     matter_id: uuid.UUID,
@@ -92,9 +98,72 @@ async def trigger_contract_review(
 
 
 @router.post(
+    "/matters/{matter_id}/analyses/batch-contract-review",
+    response_model=ReviewTaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(rate_limit_llm)],
+)
+async def trigger_batch_contract_review(
+    matter_id: uuid.UUID,
+    payload: BatchContractReviewRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+    model_router: ModelRouter = Depends(get_router),
+) -> ReviewTaskRead:
+    """Run contract review per document across a matter to build a Portfolio Risk Matrix."""
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=True)
+
+    task = ReviewTask(
+        matter_id=matter_id,
+        task_type="batch_contract_review",
+        status="queued",
+        requested_provider=payload.provider,
+        requested_model=payload.model,
+        input_params_json=payload.model_dump(mode="json"),
+    )
+    session.add(task)
+    await session.commit()
+    await session.refresh(task)
+
+    await dispatch_batch_contract_review(
+        session=session,
+        settings=settings,
+        background_tasks=background_tasks,
+        router=model_router,
+        matter_id=matter_id,
+        task=task,
+        document_ids=payload.document_ids,
+        clause_types=payload.clause_types,
+        playbook_notes=payload.playbook_notes,
+        playbook_id=payload.playbook_id,
+        provider=payload.provider,
+        model=payload.model,
+    )
+    await session.refresh(task)
+    return ReviewTaskRead.model_validate(task)
+
+
+@router.get("/matters/{matter_id}/analyses/risk-matrix", response_model=PortfolioRiskMatrixResponse)
+async def get_portfolio_risk_matrix(
+    matter_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> PortfolioRiskMatrixResponse:
+    """Return Documents × Clause Categories risk matrix aggregated from contract findings."""
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=False)
+    try:
+        return await build_portfolio_risk_matrix(session, matter_id=matter_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post(
     "/matters/{matter_id}/analyses/discovery-synthesis",
     response_model=ReviewTaskRead,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(rate_limit_llm)],
 )
 async def trigger_discovery_synthesis(
     matter_id: uuid.UUID,
@@ -179,7 +248,11 @@ async def search_matter(
     )
 
 
-@router.post("/matters/{matter_id}/research/query", response_model=ResearchQueryResponse)
+@router.post(
+    "/matters/{matter_id}/research/query",
+    response_model=ResearchQueryResponse,
+    dependencies=[Depends(rate_limit_llm)],
+)
 async def research_query(
     matter_id: uuid.UUID,
     payload: ResearchQueryRequest,
@@ -211,6 +284,7 @@ async def research_query(
     "/matters/{matter_id}/drafts",
     response_model=ReviewTaskRead,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(rate_limit_llm)],
 )
 async def generate_draft(
     matter_id: uuid.UUID,

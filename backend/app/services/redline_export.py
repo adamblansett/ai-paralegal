@@ -11,22 +11,111 @@ from app.core.disclaimer import LEGAL_DISCLAIMER
 from app.models.finding import ExtractedFinding
 from app.models.matter import Matter
 
-_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_DOCX_MIME = DOCX_MIME
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
-def _xml_esc(value: str) -> str:
+def xml_esc(value: str) -> str:
+    """Escape XML entities cleanly for OOXML runs."""
     return escape(value, quote=True)
 
 
-def _p(text: str, *, bold: bool = False, color: str | None = None, size: int = 20) -> str:
+def _xml_esc(value: str) -> str:
+    return xml_esc(value)
+
+
+def docx_paragraph(
+    text: str, *, bold: bool = False, color: str | None = None, size: int = 20
+) -> str:
+    """Build a styled OOXML paragraph element."""
     rpr_parts = [f'<w:sz w:val="{size}"/>', f'<w:szCs w:val="{size}"/>']
     if bold:
         rpr_parts.append("<w:b/>")
     if color:
         rpr_parts.append(f'<w:color w:val="{color}"/>')
     rpr = f"<w:rPr>{''.join(rpr_parts)}</w:rPr>"
-    return f'<w:p><w:r>{rpr}<w:t xml:space="preserve">{_xml_esc(text)}</w:t></w:r></w:p>'
+    return f'<w:p><w:r>{rpr}<w:t xml:space="preserve">{xml_esc(text)}</w:t></w:r></w:p>'
+
+
+def _p(text: str, *, bold: bool = False, color: str | None = None, size: int = 20) -> str:
+    return docx_paragraph(text, bold=bold, color=color, size=size)
+
+
+def docx_table(
+    headers: list[str],
+    rows: list[list[str]],
+    *,
+    col_widths: list[int] | None = None,
+) -> str:
+    """Build a bordered OOXML table across arbitrary columns."""
+    borders = (
+        "<w:tblBorders>"
+        '<w:top w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:left w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:right w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>'
+        "</w:tblBorders>"
+    )
+    widths = col_widths or [max(900, 9360 // max(1, len(headers)))] * len(headers)
+    grid_cols = "".join(f"<w:gridCol w:w='{w}'/>" for w in widths)
+    hdr_cells = "".join(
+        f'<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/>'
+        '<w:shd w:val="clear" w:color="auto" w:fill="F1F5F9"/></w:tcPr>'
+        f"{docx_paragraph(h, bold=True, size=18)}</w:tc>"
+        for h, w in zip(headers, widths, strict=True)
+    )
+    body_rows = []
+    for row in rows:
+        cells = "".join(
+            f'<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/></w:tcPr>'
+            f"{docx_paragraph(val, size=16)}</w:tc>"
+            for val, w in zip(row, widths, strict=True)
+        )
+        body_rows.append(f"<w:tr>{cells}</w:tr>")
+    return (
+        "<w:tbl>"
+        f"<w:tblPr><w:tblW w:w='9360' w:type='dxa'/>{borders}</w:tblPr>"
+        f"<w:tblGrid>{grid_cols}</w:tblGrid>"
+        f"<w:tr>{hdr_cells}</w:tr>{''.join(body_rows)}</w:tbl>"
+    )
+
+
+def build_ooxml_docx(body_xml: list[str]) -> bytes:
+    """Package OOXML body elements into a valid `.docx` ZIP archive in memory."""
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:document xmlns:w="{_W_NS}">'
+        f"<w:body>{''.join(body_xml)}<w:sectPr/></w:body>"
+        "</w:document>"
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" '
+        'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.'
+        'wordprocessingml.document.main+xml"/>'
+        "</Types>"
+    )
+    rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="word/document.xml"/>'
+        "</Relationships>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types.encode("utf-8"))
+        zf.writestr("_rels/.rels", rels_xml.encode("utf-8"))
+        zf.writestr("word/document.xml", document_xml.encode("utf-8"))
+    return buf.getvalue()
 
 
 def _track_changes_p(
@@ -199,35 +288,4 @@ async def export_redline_docx(
                     _p(f"Attorney Notes: {finding.reviewer_notes}", color="0F172A", size=18)
                 )
 
-    document_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        f'<w:document xmlns:w="{_W_NS}">'
-        f"<w:body>{''.join(body_xml)}<w:sectPr/></w:body>"
-        "</w:document>"
-    )
-    content_types = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-        '<Default Extension="rels" '
-        'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        '<Default Extension="xml" ContentType="application/xml"/>'
-        '<Override PartName="/word/document.xml" '
-        'ContentType="application/vnd.openxmlformats-officedocument.'
-        'wordprocessingml.document.main+xml"/>'
-        "</Types>"
-    )
-    rels_xml = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" '
-        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
-        'Target="word/document.xml"/>'
-        "</Relationships>"
-    )
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("[Content_Types].xml", content_types.encode("utf-8"))
-        zf.writestr("_rels/.rels", rels_xml.encode("utf-8"))
-        zf.writestr("word/document.xml", document_xml.encode("utf-8"))
-    return buf.getvalue(), _DOCX_MIME, f"{slug}_redline.docx"
+    return build_ooxml_docx(body_xml), _DOCX_MIME, f"{slug}_redline.docx"

@@ -13,6 +13,8 @@ from app.models.document import Document, DocumentChunk
 from app.models.review_task import ReviewTask
 from app.services.audit import record_audit_log
 from app.services.chunker import chunk_segments
+from app.services.events import event_bus
+from app.services.guardrails import detect_privilege_indicators, scan_text_for_pii
 from app.services.ocr import OCRService
 from app.services.parsers import parse_document_bytes
 from app.storage.base import StorageBackend
@@ -122,6 +124,15 @@ async def process_document(
         task.started_at = now
         task.error_message = None
     await session.commit()
+    event_bus.publish(
+        doc.matter_id,
+        "document_status",
+        {
+            "document_id": str(doc.id),
+            "filename": doc.filename,
+            "ingestion_status": "processing",
+        },
+    )
 
     try:
         cfg = get_settings()
@@ -139,6 +150,10 @@ async def process_document(
             ocr_service=ocr_service,
         )
         chunk_drafts = chunk_segments(parsed.segments)
+        full_text = "\n\n".join(seg.text for seg in parsed.segments)
+        pii_scan = scan_text_for_pii(full_text)
+        priv_detect = detect_privilege_indicators(full_text, doc.filename)
+
         embeddings = (
             await embedding_service.embed_batch([c.content for c in chunk_drafts])
             if chunk_drafts
@@ -169,11 +184,20 @@ async def process_document(
         if doc.document_type == "general" and parsed.detected_document_type != "general":
             doc.document_type = parsed.detected_document_type
 
+        merged_meta = {**(doc.metadata_json or {}), **parsed.metadata}
+        if doc.privilege_status == "none" and priv_detect.suggested_status != "none":
+            doc.privilege_status = priv_detect.suggested_status
+            doc.privilege_reason = priv_detect.reason
+            merged_meta["privilege_auto_detected"] = True
+            merged_meta["privilege_markers"] = priv_detect.matched_markers
+
+        doc.pii_detected_count = pii_scan.total_count
+        doc.pii_summary_json = pii_scan.counts_by_type
         doc.ingestion_status = "indexed"
         doc.page_count = parsed.page_count
         doc.word_count = parsed.word_count
         doc.chunk_count = len(chunk_drafts)
-        doc.metadata_json = {**(doc.metadata_json or {}), **parsed.metadata}
+        doc.metadata_json = merged_meta
 
         completed = datetime.now(UTC)
         if task is not None:
@@ -184,6 +208,8 @@ async def process_document(
                 "word_count": doc.word_count,
                 "chunk_count": doc.chunk_count,
                 "detected_document_type": doc.document_type,
+                "privilege_status": doc.privilege_status,
+                "pii_detected_count": doc.pii_detected_count,
             }
 
         await record_audit_log(
@@ -198,11 +224,25 @@ async def process_document(
             new_state="indexed",
             notes=(
                 f"Indexed {doc.chunk_count} chunk(s), {doc.page_count} page(s), "
-                f"{doc.word_count} word(s)."
+                f"{doc.word_count} word(s), {doc.pii_detected_count} PII item(s)."
             ),
         )
         await session.commit()
         await session.refresh(doc)
+        event_bus.publish(
+            doc.matter_id,
+            "document_status",
+            {
+                "document_id": str(doc.id),
+                "filename": doc.filename,
+                "ingestion_status": "indexed",
+                "page_count": doc.page_count,
+                "chunk_count": doc.chunk_count,
+                "privilege_status": doc.privilege_status,
+                "pii_detected_count": doc.pii_detected_count,
+                "ocr_applied": bool(merged_meta.get("ocr_applied", False)),
+            },
+        )
         return doc
     except Exception as exc:
         await session.rollback()
@@ -229,4 +269,14 @@ async def process_document(
                 notes=str(exc),
             )
             await session.commit()
+            event_bus.publish(
+                doc_err.matter_id,
+                "document_status",
+                {
+                    "document_id": str(doc_err.id),
+                    "filename": doc_err.filename,
+                    "ingestion_status": "failed",
+                    "error_message": str(exc),
+                },
+            )
         raise

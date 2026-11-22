@@ -50,6 +50,16 @@ class Document(Base):
     page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     word_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bates_start: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    bates_end: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    privilege_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="none", index=True
+    )
+    privilege_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pii_detected_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pii_summary_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONBCompat, nullable=False, default=dict
+    )
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONBCompat, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

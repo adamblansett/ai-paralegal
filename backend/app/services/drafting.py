@@ -13,6 +13,7 @@ from app.llm.types import DraftOutputLLMOutput, LLMRequest
 from app.models.finding import ExtractedFinding
 from app.models.review_task import ReviewTask
 from app.services.audit import record_audit_log
+from app.services.events import event_bus
 from app.services.retrieval import (
     chunks_to_source_contexts,
     hybrid_search,
@@ -198,6 +199,16 @@ async def run_draft_generation(
 
         await session.commit()
         await session.refresh(task)
+        event_bus.publish(
+            matter_id,
+            "task_completed",
+            {
+                "task_id": str(task.id),
+                "task_type": "draft_generation",
+                "status": "completed",
+                "finding_id": str(finding.id),
+            },
+        )
         return task
     except Exception as exc:
         await session.rollback()
@@ -207,4 +218,14 @@ async def run_draft_generation(
             failed_task.error_message = str(exc)
             failed_task.completed_at = datetime.now(UTC)
             await session.commit()
+        event_bus.publish(
+            matter_id,
+            "task_failed",
+            {
+                "task_id": str(task_id),
+                "task_type": "draft_generation",
+                "status": "failed",
+                "error_message": str(exc),
+            },
+        )
         raise

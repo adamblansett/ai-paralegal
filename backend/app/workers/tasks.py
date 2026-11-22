@@ -6,7 +6,7 @@ from app.core.config import get_settings
 from app.db.session import build_worker_session_factory
 from app.llm.embeddings import EmbeddingService
 from app.llm.router import ModelRouter
-from app.services.contract_review import run_contract_review
+from app.services.contract_review import run_batch_contract_review, run_contract_review
 from app.services.discovery import run_discovery_synthesis
 from app.services.drafting import run_draft_generation
 from app.services.ingestion import process_document
@@ -152,6 +152,65 @@ def contract_review_task(
     """Celery task to run contract/clause review on a matter."""
     return asyncio.run(
         _contract_review_async(
+            matter_id,
+            task_id,
+            document_ids,
+            clause_types,
+            playbook_notes,
+            playbook_id,
+            provider,
+            model,
+        )
+    )
+
+
+async def _batch_contract_review_async(
+    matter_id: str,
+    task_id: str,
+    document_ids: list[str] | None,
+    clause_types: list[str] | None,
+    playbook_notes: str | None,
+    playbook_id: str | None,
+    provider: str | None,
+    model: str | None,
+) -> dict[str, Any]:
+    cfg = get_settings()
+    engine, factory = build_worker_session_factory(cfg)
+    router = ModelRouter(cfg)
+    try:
+        async with factory() as session:
+            task = await run_batch_contract_review(
+                session,
+                router,
+                matter_id=uuid.UUID(matter_id),
+                task_id=uuid.UUID(task_id),
+                document_ids=[uuid.UUID(d) for d in document_ids] if document_ids else None,
+                clause_types=clause_types,
+                playbook_notes=playbook_notes,
+                playbook_id=uuid.UUID(playbook_id) if playbook_id else None,
+                provider=provider,
+                model=model,
+                settings=cfg,
+            )
+            return {"task_id": str(task.id), "status": task.status}
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(name="ai_paralegal.batch_contract_review")
+def batch_contract_review_task(
+    matter_id: str,
+    task_id: str,
+    document_ids: list[str] | None = None,
+    clause_types: list[str] | None = None,
+    playbook_notes: str | None = None,
+    playbook_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Celery task to run batch per-document contract review for a portfolio risk matrix."""
+    return asyncio.run(
+        _batch_contract_review_async(
             matter_id,
             task_id,
             document_ids,

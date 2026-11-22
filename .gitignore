@@ -32,6 +32,9 @@ backend/storage/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/playwright-report/
+frontend/test-results/
+playwright/.cache/
 
 # OS / IDE
 .DS_Store

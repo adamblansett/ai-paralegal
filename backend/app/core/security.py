@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel
@@ -27,6 +28,7 @@ class TokenPayload(BaseModel):
     full_name: str
     role: str
     exp: int
+    jti: str | None = None
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -88,6 +90,7 @@ def create_access_token(
         "full_name": full_name,
         "role": role,
         "exp": int(exp_dt.timestamp()),
+        "jti": str(uuid.uuid4()),
     }
     header_b64 = _b64url_encode(
         json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -140,3 +143,14 @@ def decode_access_token(token: str, settings: Settings) -> TokenPayload:
         raise TokenError("Access token has expired.")
 
     return claims
+
+
+def hash_refresh_token(raw_token: str) -> str:
+    """Compute SHA-256 hex digest of an opaque refresh token."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def generate_refresh_token() -> tuple[str, str]:
+    """Generate a high-entropy opaque refresh token paired with its SHA-256 hash."""
+    raw = secrets.token_urlsafe(48)
+    return raw, hash_refresh_token(raw)

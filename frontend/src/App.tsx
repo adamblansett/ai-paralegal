@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Activity,
   FileCheck2,
   Files,
   GitCompare,
@@ -18,7 +19,9 @@ import { MatterSidebar } from './components/MatterSidebar';
 import { NewMatterModal } from './components/NewMatterModal';
 import { PlaybookModal } from './components/PlaybookModal';
 import { ReviewAuditTab } from './components/ReviewAuditTab';
+import { SourceViewerDrawer } from './components/SourceViewerDrawer';
 import { TeamAccessModal } from './components/TeamAccessModal';
+import { useMatterEvents } from './hooks/useMatterEvents';
 import type {
   AuditLogEntry,
   DocumentItem,
@@ -28,7 +31,9 @@ import type {
   MatterCreateInput,
   Playbook,
   ReviewTaskItem,
+  SourceViewerTarget,
   UserProfile,
+  VerifiedCitation,
 } from './types/api';
 
 type WorkspaceTab = 'documents' | 'contracts' | 'discovery' | 'review';
@@ -45,6 +50,7 @@ export default function App() {
   const [modalOpen, setModalOpen] = useState(false);
   const [teamModalOpen, setTeamModalOpen] = useState(false);
   const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
+  const [sourceTarget, setSourceTarget] = useState<SourceViewerTarget | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,6 +123,11 @@ export default function App() {
     }
   }, [currentUser, selectedMatterId]);
 
+  const { connected: sseConnected, liveActivity } = useMatterEvents(
+    currentUser ? selectedMatterId : null,
+    refreshMatterData
+  );
+
   useEffect(() => {
     void loadBootstrap();
   }, [loadBootstrap]);
@@ -132,15 +143,41 @@ export default function App() {
     setActiveTab('documents');
   }
 
-  function handleSignOut() {
+  async function handleSignOut() {
+    try {
+      await api.logout(tokenStore.getRefresh());
+    } catch {
+      // ignore network/expired-token errors during logout
+    }
     tokenStore.clear();
     setCurrentUser(null);
     setMatters([]);
     setSelectedMatterId(null);
+    setSourceTarget(null);
     setDocuments([]);
     setFindings([]);
     setTasks([]);
     setAuditLogs([]);
+  }
+
+  function handleInspectCitation(citation: VerifiedCitation) {
+    if (!citation.document_id) return;
+    setSourceTarget({
+      documentId: citation.document_id,
+      filename: citation.document_filename,
+      chunkId: citation.chunk_id,
+      quote: citation.quote,
+      pageNumber: citation.page_number,
+      paragraphIndex: citation.paragraph_index,
+      sectionHeading: citation.section_heading,
+    });
+  }
+
+  function handleOpenDocument(doc: DocumentItem) {
+    setSourceTarget({
+      documentId: doc.id,
+      filename: doc.filename,
+    });
   }
 
   if (authChecking) {
@@ -165,7 +202,7 @@ export default function App() {
         selectedMatterId={selectedMatterId}
         onSelectMatter={setSelectedMatterId}
         onNewMatter={() => setModalOpen(true)}
-        onSignOut={handleSignOut}
+        onSignOut={() => void handleSignOut()}
         currentUser={currentUser}
         health={health}
       />
@@ -217,6 +254,16 @@ export default function App() {
                         {activeMatter.jurisdiction}
                       </span>
                     )}
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        sseConnected
+                          ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <Activity className="h-3 w-3" />
+                      {liveActivity ? liveActivity : sseConnected ? 'Live SSE' : 'Connecting SSE'}
+                    </span>
                   </div>
                   <h2 className="mt-1.5 text-lg font-bold text-slate-900">{activeMatter.title}</h2>
                   <p className="text-xs text-slate-500">Client: {activeMatter.client_name}</p>
@@ -291,6 +338,7 @@ export default function App() {
                   matterId={activeMatter.id}
                   documents={documents}
                   canWrite={currentUser.role !== 'auditor'}
+                  onOpenDocument={handleOpenDocument}
                   onRefresh={refreshMatterData}
                 />
               )}
@@ -303,6 +351,7 @@ export default function App() {
                   currentUser={currentUser}
                   health={health}
                   onNewPlaybook={() => setPlaybookModalOpen(true)}
+                  onInspectCitation={handleInspectCitation}
                   onRefresh={refreshMatterData}
                 />
               )}
@@ -312,6 +361,7 @@ export default function App() {
                   findings={findings}
                   tasks={tasks}
                   health={health}
+                  onInspectCitation={handleInspectCitation}
                   onRefresh={refreshMatterData}
                 />
               )}
@@ -320,6 +370,7 @@ export default function App() {
                   findings={findings}
                   auditLogs={auditLogs}
                   currentUser={currentUser}
+                  onInspectCitation={handleInspectCitation}
                   onRefresh={refreshMatterData}
                 />
               )}
@@ -351,6 +402,8 @@ export default function App() {
           setPlaybooks((prev) => [...prev, pb]);
         }}
       />
+
+      <SourceViewerDrawer target={sourceTarget} onClose={() => setSourceTarget(null)} />
     </div>
   );
 }

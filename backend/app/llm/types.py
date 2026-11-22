@@ -21,6 +21,8 @@ class SourceChunkContext(BaseModel):
     section_heading: str | None = None
     char_start: int | None = None
     char_end: int | None = None
+    privilege_status: str = "none"
+    bates_number: str | None = None
     content: str
 
 
@@ -81,6 +83,7 @@ class LLMResponse[T: BaseModel](BaseModel):
     latency_ms: int = 0
     fallback_used: bool = False
     fallback_errors: list[str] = Field(default_factory=list)
+    redaction_summary: dict[str, int] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

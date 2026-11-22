@@ -1,19 +1,25 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import {
+  BookOpen,
+  Download,
   Eye,
   FileText,
   Loader2,
   RefreshCw,
+  Shield,
+  ShieldAlert,
+  Stamp,
   Trash2,
   UploadCloud,
 } from 'lucide-react';
 import { api } from '../api/client';
-import type { DocumentChunkItem, DocumentItem } from '../types/api';
+import type { DocumentChunkItem, DocumentItem, PrivilegeStatus } from '../types/api';
 
 interface DocumentsTabProps {
   matterId: string;
   documents: DocumentItem[];
   canWrite?: boolean;
+  onOpenDocument?: (doc: DocumentItem) => void;
   onRefresh: () => Promise<void>;
 }
 
@@ -24,10 +30,19 @@ const STATUS_STYLE: Record<string, string> = {
   failed: 'bg-rose-50 text-rose-800 border-rose-200',
 };
 
+const PRIVILEGE_LABELS: Record<PrivilegeStatus, string> = {
+  none: 'Not Privileged',
+  attorney_client: 'Attorney-Client',
+  work_product: 'Work Product',
+  confidential: 'Confidential',
+  privileged_and_confidential: 'Privileged & Conf.',
+};
+
 export function DocumentsTab({
   matterId,
   documents,
   canWrite = true,
+  onOpenDocument,
   onRefresh,
 }: DocumentsTabProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -38,6 +53,10 @@ export function DocumentsTab({
   const [inspectDoc, setInspectDoc] = useState<DocumentItem | null>(null);
   const [chunks, setChunks] = useState<DocumentChunkItem[]>([]);
   const [loadingChunks, setLoadingChunks] = useState(false);
+
+  const [batesPrefix, setBatesPrefix] = useState('PROD');
+  const [batesStart, setBatesStart] = useState(1);
+  const [stamping, setStamping] = useState(false);
 
   const hasInProgress = documents.some(
     (d) => d.ingestion_status === 'pending' || d.ingestion_status === 'processing'
@@ -87,6 +106,40 @@ export function DocumentsTab({
     }
   }
 
+  async function handlePrivilegeChange(docId: string, privilegeStatus: PrivilegeStatus) {
+    setError(null);
+    try {
+      await api.updateDocumentPrivilege(docId, {
+        privilege_status: privilegeStatus,
+        privilege_reason:
+          privilegeStatus === 'none'
+            ? undefined
+            : `Designated ${PRIVILEGE_LABELS[privilegeStatus]} via Matter Registry`,
+      });
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update privilege classification.');
+    }
+  }
+
+  async function handleBatesStamp() {
+    setError(null);
+    setStamping(true);
+    try {
+      const res = await api.batesStampDocuments(matterId, {
+        prefix: batesPrefix.trim() || 'PROD',
+        start_number: batesStart,
+        zero_pad: 6,
+      });
+      setBatesStart(res.next_number);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Bates stamping failed.');
+    } finally {
+      setStamping(false);
+    }
+  }
+
   async function handleReprocess(docId: string) {
     setError(null);
     try {
@@ -110,6 +163,10 @@ export function DocumentsTab({
       setError(err instanceof Error ? err.message : 'Delete failed.');
     }
   }
+
+  const privilegedCount = documents.filter(
+    (d) => d.privilege_status && d.privilege_status !== 'none'
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -188,6 +245,62 @@ export function DocumentsTab({
         </div>
       </div>
 
+      {/* Discovery Production Bar: Bates Stamping & Privilege Log */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-5 py-3.5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2.5 text-xs">
+          <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+            <Stamp className="h-4 w-4 text-indigo-600" />
+            Bates Numbering
+          </span>
+          <input
+            type="text"
+            value={batesPrefix}
+            onChange={(e) => setBatesPrefix(e.target.value.toUpperCase())}
+            aria-label="Bates prefix"
+            placeholder="PROD"
+            className="w-24 rounded-lg border border-slate-300 px-2.5 py-1 font-mono text-xs text-slate-800"
+          />
+          <input
+            type="number"
+            min={1}
+            value={batesStart}
+            onChange={(e) => setBatesStart(Math.max(1, Number(e.target.value) || 1))}
+            aria-label="Bates start number"
+            className="w-24 rounded-lg border border-slate-300 px-2.5 py-1 font-mono text-xs text-slate-800"
+          />
+          <button
+            type="button"
+            disabled={!canWrite || stamping || documents.length === 0}
+            onClick={() => void handleBatesStamp()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            {stamping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Stamp className="h-3.5 w-3.5" />}
+            Apply Bates Stamps
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700">
+            <Shield className="h-3 w-3 text-rose-600" />
+            Privileged Docs: {privilegedCount}
+          </span>
+          <a
+            href={api.exportPrivilegeLogUrl(matterId, 'csv')}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Privilege Log CSV
+          </a>
+          <a
+            href={api.exportPrivilegeLogUrl(matterId, 'docx')}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Privilege Log DOCX
+          </a>
+        </div>
+      </div>
+
       {/* Document Registry Table */}
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
@@ -215,94 +328,151 @@ export function DocumentsTab({
               <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Document</th>
-                  <th className="px-4 py-3">Type</th>
+                  <th className="px-4 py-3">Bates / Guardrails</th>
+                  <th className="px-4 py-3">Privilege</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Provenance Stats</th>
-                  <th className="px-4 py-3">SHA-256</th>
+                  <th className="px-4 py-3">Provenance</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {documents.map((doc) => (
-                  <tr key={doc.id} className="hover:bg-slate-50/70">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 font-medium text-slate-900">
-                        <FileText className="h-4 w-4 text-slate-400" />
-                        <span>{doc.filename}</span>
-                      </div>
-                      <p className="mt-0.5 text-[11px] text-slate-400">
-                        {(doc.file_size_bytes / 1024).toFixed(1)} KB • {doc.storage_backend}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3 capitalize text-slate-700">{doc.document_type}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${
-                          STATUS_STYLE[doc.ingestion_status] || 'bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        {(doc.ingestion_status === 'processing' ||
-                          doc.ingestion_status === 'pending') && (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        )}
-                        {doc.ingestion_status}
-                      </span>
-                      {Boolean(doc.metadata_json?.ocr_applied) && (
-                        <span className="ml-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-800 ring-1 ring-indigo-200">
-                          OCR ({String(doc.metadata_json?.ocr_backend ?? 'applied')})
-                        </span>
-                      )}
-                      {Boolean(doc.metadata_json?.ocr_required) && (
-                        <span className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                          Needs OCR
-                        </span>
-                      )}
-                      {doc.error_message && (
-                        <p className="mt-1 max-w-xs truncate text-[11px] text-rose-600">
-                          {doc.error_message}
+                {documents.map((doc) => {
+                  const privStatus = (doc.privilege_status || 'none') as PrivilegeStatus;
+                  const piiCount = doc.pii_detected_count ?? 0;
+                  return (
+                    <tr key={doc.id} className="hover:bg-slate-50/70">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2 font-medium text-slate-900">
+                          <FileText className="h-4 w-4 text-slate-400" />
+                          <span>{doc.filename}</span>
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-slate-400">
+                          <span className="capitalize">{doc.document_type}</span> •{' '}
+                          {(doc.file_size_bytes / 1024).toFixed(1)} KB • {doc.sha256_hash.slice(0, 8)}
                         </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {doc.page_count}p • {doc.word_count}w • {doc.chunk_count} chunks
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
-                      {doc.sha256_hash.slice(0, 12)}…
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => void handleInspect(doc)}
-                          className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
-                        >
-                          <Eye className="h-3 w-3" />
-                          Chunks
-                        </button>
-                        {canWrite && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void handleReprocess(doc.id)}
-                              title="Reprocess document"
-                              className="rounded border border-slate-200 p-1 text-slate-600 hover:bg-slate-100"
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleDelete(doc.id)}
-                              title="Delete document"
-                              className="rounded border border-rose-200 p-1 text-rose-600 hover:bg-rose-50"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </>
+                      </td>
+                      <td className="px-4 py-3 space-y-1">
+                        {doc.bates_start ? (
+                          <span className="inline-block rounded bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-800">
+                            {doc.bates_start}
+                            {doc.bates_end && doc.bates_end !== doc.bates_start
+                              ? `–${doc.bates_end}`
+                              : ''}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">Unstamped</span>
                         )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        {piiCount > 0 && (
+                          <div>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                              <ShieldAlert className="h-3 w-3" />
+                              {piiCount} PII
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {canWrite ? (
+                          <select
+                            aria-label={`Privilege status for ${doc.filename}`}
+                            value={privStatus}
+                            onChange={(e) =>
+                              void handlePrivilegeChange(doc.id, e.target.value as PrivilegeStatus)
+                            }
+                            className={`rounded-lg border px-2 py-1 text-[11px] font-medium ${
+                              privStatus === 'none'
+                                ? 'border-slate-200 bg-white text-slate-600'
+                                : 'border-rose-300 bg-rose-50 text-rose-900'
+                            }`}
+                          >
+                            {Object.entries(PRIVILEGE_LABELS).map(([val, lbl]) => (
+                              <option key={val} value={val}>
+                                {lbl}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                            {PRIVILEGE_LABELS[privStatus]}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${
+                            STATUS_STYLE[doc.ingestion_status] || 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {(doc.ingestion_status === 'processing' ||
+                            doc.ingestion_status === 'pending') && (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          )}
+                          {doc.ingestion_status}
+                        </span>
+                        {Boolean(doc.metadata_json?.ocr_applied) && (
+                          <span className="ml-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-800 ring-1 ring-indigo-200">
+                            OCR ({String(doc.metadata_json?.ocr_backend ?? 'applied')})
+                          </span>
+                        )}
+                        {Boolean(doc.metadata_json?.ocr_required) && (
+                          <span className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                            Needs OCR
+                          </span>
+                        )}
+                        {doc.error_message && (
+                          <p className="mt-1 max-w-xs truncate text-[11px] text-rose-600">
+                            {doc.error_message}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {doc.page_count}p • {doc.word_count}w • {doc.chunk_count} chunks
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="inline-flex items-center gap-1.5">
+                          {onOpenDocument && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenDocument(doc)}
+                              className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-800 hover:bg-indigo-100"
+                            >
+                              <BookOpen className="h-3 w-3" />
+                              Reader
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void handleInspect(doc)}
+                            className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                          >
+                            <Eye className="h-3 w-3" />
+                            Chunks
+                          </button>
+                          {canWrite && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void handleReprocess(doc.id)}
+                                title="Reprocess document"
+                                className="rounded border border-slate-200 p-1 text-slate-600 hover:bg-slate-100"
+                              >
+                                <RefreshCw className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDelete(doc.id)}
+                                title="Delete document"
+                                className="rounded border border-rose-200 p-1 text-rose-600 hover:bg-rose-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

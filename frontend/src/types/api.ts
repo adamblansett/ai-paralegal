@@ -4,6 +4,12 @@ export type SeverityLevel = 'info' | 'low' | 'medium' | 'high' | 'critical';
 export type VerificationStatus = 'verified_exact' | 'verified_fuzzy' | 'unverified';
 export type UserRole = 'partner' | 'associate' | 'paralegal' | 'auditor';
 export type AccessLevel = 'owner' | 'editor' | 'reviewer' | 'viewer';
+export type PrivilegeStatus =
+  | 'none'
+  | 'attorney_client'
+  | 'work_product'
+  | 'confidential'
+  | 'privileged_and_confidential';
 
 export interface UserProfile {
   id: string;
@@ -16,6 +22,8 @@ export interface UserProfile {
 
 export interface TokenResponse {
   access_token: string;
+  refresh_token?: string | null;
+  expires_in?: number;
   token_type: string;
   user: UserProfile;
 }
@@ -65,6 +73,9 @@ export interface HealthResponse {
   auth_enabled: boolean;
   ocr_backend: string;
   tesseract_available: boolean;
+  max_upload_size_mb?: number;
+  pii_cloud_redaction_enabled?: boolean;
+  oidc_enabled?: boolean;
   disclaimer: string;
 }
 
@@ -116,9 +127,74 @@ export interface DocumentItem {
   page_count: number;
   word_count: number;
   chunk_count: number;
+  bates_start?: string | null;
+  bates_end?: string | null;
+  privilege_status?: PrivilegeStatus;
+  privilege_reason?: string | null;
+  pii_detected_count?: number;
+  pii_summary_json?: Record<string, number>;
   metadata_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface BatesStampResponse {
+  matter_id: string;
+  prefix: string;
+  stamped_count: number;
+  next_number: number;
+  documents: DocumentItem[];
+}
+
+export interface MatrixCell {
+  severity: SeverityLevel | 'none';
+  finding_count: number;
+  review_status: ReviewStatus;
+  escalated: boolean;
+  finding_ids: string[];
+  top_title?: string | null;
+}
+
+export interface MatrixDocumentRow {
+  document_id: string;
+  filename: string;
+  bates_range: string | null;
+  privilege_status: string;
+  overall_risk: string;
+  finding_count: number;
+  escalated_count: number;
+  cells: Record<string, MatrixCell>;
+}
+
+export interface PortfolioRiskMatrix {
+  matter_id: string;
+  categories: string[];
+  rows: MatrixDocumentRow[];
+  total_documents: number;
+  total_findings: number;
+  high_risk_documents: number;
+}
+
+export interface SourceViewerTarget {
+  documentId: string;
+  filename?: string | null;
+  chunkId?: string | null;
+  quote?: string | null;
+  pageNumber?: number | null;
+  paragraphIndex?: number | null;
+  sectionHeading?: string | null;
+}
+
+export interface TelemetrySummary {
+  http_requests_total: number;
+  llm_calls_total: number;
+  llm_calls_by_provider: Record<string, number>;
+  llm_prompt_tokens_total: number;
+  llm_completion_tokens_total: number;
+  llm_estimated_cost_usd_total: number;
+  pii_redactions_total: number;
+  ocr_pages_processed_total: number;
+  citation_grounding_failures_total: number;
 }
 
 export interface DocumentChunkItem {

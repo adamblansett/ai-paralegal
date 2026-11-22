@@ -1,4 +1,11 @@
-from evals.runner import format_markdown_report, run_benchmark
+from app.core.config import Settings
+from app.llm.router import ModelRouter
+from evals.runner import (
+    format_comparison_markdown,
+    format_markdown_report,
+    run_benchmark,
+    run_comparison_benchmark,
+)
 
 
 async def test_eval_benchmark_harness_passes_with_mock_provider() -> None:
@@ -16,3 +23,25 @@ async def test_eval_benchmark_harness_passes_with_mock_provider() -> None:
     md = format_markdown_report(report)
     assert "Hallucination Catch Rate" in md
     assert "100.0%" in md
+
+
+async def test_multi_model_comparison_and_task_routing() -> None:
+    cfg = Settings(gemini_api_key="")
+    router = ModelRouter(cfg)
+    assert router.resolve_task_model("ollama", "contract_review", None) == "qwen-2.5-7b-instruct"
+    assert router.resolve_task_model("gemini", "discovery_synthesis", None) == "gemini-2.5-pro"
+
+    comp = await run_comparison_benchmark(
+        [
+            ("mock", "mock-legal-deterministic-v1"),
+            ("gemini", "gemini-2.5-flash"),
+        ],
+        settings=cfg,
+    )
+    assert len(comp.results) == 2
+    assert comp.results[0].status == "completed"
+    assert comp.results[0].composite_score == 1.0
+    assert comp.results[1].status == "skipped"
+    scorecard_md = format_comparison_markdown(comp)
+    assert "mock:mock-legal-deterministic-v1" in scorecard_md
+    assert "GEMINI_API_KEY not configured" in scorecard_md

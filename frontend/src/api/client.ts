@@ -1,6 +1,7 @@
 import type {
   AccessLevel,
   AuditLogEntry,
+  BatesStampResponse,
   DocumentChunkItem,
   DocumentItem,
   DocumentUploadResponse,
@@ -12,10 +13,13 @@ import type {
   MatterMember,
   Playbook,
   PlaybookRule,
+  PortfolioRiskMatrix,
+  PrivilegeStatus,
   ResearchQueryResponse,
   ReviewStatus,
   ReviewTaskItem,
   SearchResponse,
+  TelemetrySummary,
   TokenResponse,
   UserProfile,
   UserRole,
@@ -23,14 +27,59 @@ import type {
 
 const API_BASE = '/api/v1';
 const TOKEN_STORAGE_KEY = 'ai_paralegal_token';
+const REFRESH_TOKEN_STORAGE_KEY = 'ai_paralegal_refresh_token';
 
 export const tokenStore = {
   get: (): string | null => window.localStorage.getItem(TOKEN_STORAGE_KEY),
   set: (token: string): void => window.localStorage.setItem(TOKEN_STORAGE_KEY, token),
-  clear: (): void => window.localStorage.removeItem(TOKEN_STORAGE_KEY),
+  getRefresh: (): string | null => window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY),
+  setRefresh: (token: string): void => window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token),
+  clear: (): void => {
+    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+  },
 };
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+let refreshPromise: Promise<string | null> | null = null;
+
+async function attemptTokenRefresh(): Promise<string | null> {
+  const refresh = tokenStore.getRefresh();
+  if (!refresh) return null;
+
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refresh }),
+        });
+        if (!res.ok) {
+          tokenStore.clear();
+          return null;
+        }
+        const data = (await res.json()) as TokenResponse;
+        tokenStore.set(data.access_token);
+        if (data.refresh_token) {
+          tokenStore.setRefresh(data.refresh_token);
+        }
+        return data.access_token;
+      } catch {
+        tokenStore.clear();
+        return null;
+      } finally {
+        refreshPromise = null;
+      }
+    })();
+  }
+  return refreshPromise;
+}
+
+async function apiRequest<T>(
+  path: string,
+  init?: RequestInit,
+  canRetryRefresh = true
+): Promise<T> {
   const token = tokenStore.get();
   const headers: Record<string, string> = {
     ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
@@ -44,6 +93,19 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
       ...((init?.headers as Record<string, string> | undefined) ?? {}),
     },
   });
+
+  if (
+    response.status === 401 &&
+    canRetryRefresh &&
+    !path.startsWith('/auth/login') &&
+    !path.startsWith('/auth/refresh') &&
+    !path.startsWith('/auth/register')
+  ) {
+    const renewed = await attemptTokenRefresh();
+    if (renewed) {
+      return apiRequest<T>(path, init, false);
+    }
+  }
 
   if (!response.ok) {
     if (response.status === 401) {
@@ -65,15 +127,23 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-function authQuerySuffix(): string {
+function authQuerySuffix(leading = '&'): string {
   const token = tokenStore.get();
-  return token ? `&token=${encodeURIComponent(token)}` : '';
+  return token ? `${leading}token=${encodeURIComponent(token)}` : '';
 }
 
 export const api = {
   health: () => apiRequest<HealthResponse>('/health'),
+  telemetrySummary: () => apiRequest<TelemetrySummary>('/telemetry/summary'),
 
   // Auth & RBAC
+  authProviders: () =>
+    apiRequest<{
+      local_enabled: boolean;
+      oidc_enabled: boolean;
+      oidc_issuer_url: string | null;
+      oidc_client_id: string | null;
+    }>('/auth/providers'),
   login: (email: string, password: string) =>
     apiRequest<TokenResponse>('/auth/login', {
       method: 'POST',
@@ -88,6 +158,16 @@ export const api = {
     apiRequest<TokenResponse>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  refreshToken: (refreshToken: string) =>
+    apiRequest<TokenResponse>('/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    }),
+  logout: (refreshToken?: string | null) =>
+    apiRequest<{ detail: string }>('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: refreshToken ?? null }),
     }),
   me: () => apiRequest<UserProfile>('/auth/me'),
   listUsers: () => apiRequest<UserProfile[]>('/auth/users'),
@@ -129,9 +209,10 @@ export const api = {
   deletePlaybook: (playbookId: string) =>
     apiRequest<void>(`/playbooks/${playbookId}`, { method: 'DELETE' }),
 
-  // Documents
+  // Documents, Privilege & Bates
   listDocuments: (matterId: string) =>
     apiRequest<DocumentItem[]>(`/matters/${matterId}/documents`),
+  getDocument: (documentId: string) => apiRequest<DocumentItem>(`/documents/${documentId}`),
   uploadDocument: (matterId: string, file: File, documentType = 'general') => {
     const form = new FormData();
     form.append('file', file);
@@ -143,6 +224,24 @@ export const api = {
   },
   getDocumentChunks: (documentId: string) =>
     apiRequest<DocumentChunkItem[]>(`/documents/${documentId}/chunks`),
+  documentContentUrl: (documentId: string, download = false) =>
+    `${API_BASE}/documents/${documentId}/content?download=${download ? 'true' : 'false'}${authQuerySuffix('&')}`,
+  updateDocumentPrivilege: (
+    documentId: string,
+    payload: { privilege_status: PrivilegeStatus; privilege_reason?: string }
+  ) =>
+    apiRequest<DocumentItem>(`/documents/${documentId}/privilege`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  batesStampDocuments: (
+    matterId: string,
+    payload: { prefix: string; start_number: number; zero_pad?: number; document_ids?: string[] }
+  ) =>
+    apiRequest<BatesStampResponse>(`/matters/${matterId}/documents/bates-stamp`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   reprocessDocument: (documentId: string) =>
     apiRequest<DocumentUploadResponse>(`/documents/${documentId}/reprocess`, {
       method: 'POST',
@@ -150,7 +249,7 @@ export const api = {
   deleteDocument: (documentId: string) =>
     apiRequest<void>(`/documents/${documentId}`, { method: 'DELETE' }),
 
-  // Analyses & Drafting
+  // Analyses, Matrix & Drafting
   runContractReview: (
     matterId: string,
     payload: {
@@ -165,6 +264,24 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  runBatchContractReview: (
+    matterId: string,
+    payload: {
+      document_ids?: string[];
+      playbook_notes?: string;
+      playbook_id?: string;
+      provider?: LLMProviderName;
+      model?: string;
+    }
+  ) =>
+    apiRequest<ReviewTaskItem>(`/matters/${matterId}/analyses/batch-contract-review`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getRiskMatrix: (matterId: string) =>
+    apiRequest<PortfolioRiskMatrix>(`/matters/${matterId}/analyses/risk-matrix`),
 
   runDiscoverySynthesis: (
     matterId: string,
@@ -257,13 +374,17 @@ export const api = {
   listAuditLogs: (matterId: string) =>
     apiRequest<AuditLogEntry[]>(`/matters/${matterId}/audit-logs`),
 
+  matterEventsUrl: (matterId: string) =>
+    `${API_BASE}/matters/${matterId}/events${authQuerySuffix('?')}`,
+
   exportReviewTableUrl: (matterId: string, format: 'csv' | 'json' | 'markdown') =>
-    `${API_BASE}/matters/${matterId}/exports/review-table?format=${format}${authQuerySuffix()}`,
+    `${API_BASE}/matters/${matterId}/exports/review-table?format=${format}${authQuerySuffix('&')}`,
   exportChronologyUrl: (matterId: string, format: 'csv' | 'json' | 'markdown') =>
-    `${API_BASE}/matters/${matterId}/exports/chronology?format=${format}${authQuerySuffix()}`,
-  exportRedlineDocxUrl: (matterId: string) => {
-    const token = tokenStore.get();
-    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-    return `${API_BASE}/matters/${matterId}/exports/redline.docx${qs}`;
-  },
+    `${API_BASE}/matters/${matterId}/exports/chronology?format=${format}${authQuerySuffix('&')}`,
+  exportRedlineDocxUrl: (matterId: string) =>
+    `${API_BASE}/matters/${matterId}/exports/redline.docx${authQuerySuffix('?')}`,
+  exportPrivilegeLogUrl: (matterId: string, format: 'csv' | 'json' | 'markdown' | 'docx') =>
+    `${API_BASE}/matters/${matterId}/exports/privilege-log?format=${format}${authQuerySuffix('&')}`,
+  exportRiskMatrixUrl: (matterId: string, format: 'csv' | 'json') =>
+    `${API_BASE}/matters/${matterId}/exports/risk-matrix?format=${format}${authQuerySuffix('&')}`,
 };

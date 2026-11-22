@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, require_matter_access
 from app.models.user import User
-from app.services.exports import export_chronology, export_review_table
+from app.services.exports import (
+    export_chronology,
+    export_privilege_log,
+    export_review_table,
+    export_risk_matrix,
+)
 from app.services.redline_export import export_redline_docx
 
 router = APIRouter(tags=["exports"])
@@ -75,6 +80,52 @@ async def download_redline_docx(
 
     return Response(
         content=content_bytes,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/matters/{matter_id}/exports/privilege-log")
+async def download_privilege_log(
+    matter_id: uuid.UUID,
+    fmt: Literal["csv", "json", "markdown", "docx"] = Query(default="csv", alias="format"),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Export matter privilege log as CSV, JSON, Markdown, or Word (.docx)."""
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=False)
+    try:
+        content, media_type, filename = await export_privilege_log(
+            session, matter_id=matter_id, fmt=fmt
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/matters/{matter_id}/exports/risk-matrix")
+async def download_risk_matrix(
+    matter_id: uuid.UUID,
+    fmt: Literal["csv", "json"] = Query(default="csv", alias="format"),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Export Portfolio Contract Risk Matrix as CSV or JSON."""
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=False)
+    try:
+        content, media_type, filename = await export_risk_matrix(
+            session, matter_id=matter_id, fmt=fmt
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return Response(
+        content=content,
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

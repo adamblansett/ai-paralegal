@@ -15,7 +15,7 @@ from app.llm.router import ModelRouter
 from app.models.document import Document
 from app.models.finding import ExtractedFinding
 from app.models.matter import Matter
-from app.models.user import MatterMembership, User
+from app.models.user import MatterMembership, RevokedToken, User
 from app.storage import StorageBackend, get_storage_backend
 
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -66,6 +66,15 @@ async def get_current_user(
             detail=f"Invalid or expired authentication token: {exc}",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    if claims.jti:
+        revoked = await session.get(RevokedToken, claims.jti)
+        if revoked is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication token has been revoked.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     user = await session.get(User, user_id)
     if user is None or not user.is_active:

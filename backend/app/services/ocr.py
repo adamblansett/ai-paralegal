@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from app.core.metrics import metrics_registry
+
 OCRBackendMode = Literal["auto", "tesseract", "mock", "disabled"]
 _OCR_MARKER_RE = re.compile(rb"%OCR_TEXT:\s*(.+)")
 
@@ -47,6 +49,7 @@ class OCRService:
     ) -> OCRPageResult:
         """Attempt OCR extraction for a PDF page lacking an embedded text layer."""
         if self.backend_mode == "disabled":
+            metrics_registry.record_ocr_page("disabled", False)
             return OCRPageResult(
                 text="",
                 backend="disabled",
@@ -66,9 +69,11 @@ class OCRService:
                 recovered = (
                     f"Scanned page {page_number} OCR transcript recovered by mock OCR backend."
                 )
+            metrics_registry.record_ocr_page("mock", True)
             return OCRPageResult(text=recovered, backend="mock", applied=True)
 
         if not self.is_tesseract_available():
+            metrics_registry.record_ocr_page("unavailable", False)
             return OCRPageResult(
                 text="",
                 backend="unavailable",
@@ -79,7 +84,9 @@ class OCRService:
                 ),
             )
 
-        return self._run_tesseract_on_page(page, page_number, raw_pdf_bytes)
+        result = self._run_tesseract_on_page(page, page_number, raw_pdf_bytes)
+        metrics_registry.record_ocr_page(result.backend, result.applied)
+        return result
 
     def _run_tesseract_on_page(
         self,

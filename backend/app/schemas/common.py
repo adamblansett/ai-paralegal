@@ -14,6 +14,9 @@ class HealthResponse(BaseModel):
     auth_enabled: bool = True
     ocr_backend: str = "auto"
     tesseract_available: bool = False
+    max_upload_size_mb: int = 25
+    pii_cloud_redaction_enabled: bool = True
+    oidc_enabled: bool = False
     disclaimer: str
 
 
