@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ai-paralegal.fullname" . }}-config
+  labels:
+    {{- include "ai-paralegal.labels" . | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.config.appEnv | quote }}
+  APP_NAME: {{ .Values.config.appName | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  TASK_EXECUTION_MODE: {{ .Values.config.taskExecutionMode | quote }}
+  STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
+  S3_SERVER_SIDE_ENCRYPTION: {{ .Values.config.s3ServerSideEncryption | quote }}
+  RATE_LIMIT_ENABLED: {{ .Values.config.rateLimitEnabled | quote }}
+  RATE_LIMIT_BACKEND: {{ .Values.config.rateLimitBackend | quote }}
+  EVENT_BUS_BACKEND: {{ .Values.config.eventBusBackend | quote }}
+  AUTH_AUTO_SEED_DEMO_USERS: {{ .Values.config.authAutoSeedDemoUsers | quote }}
+  LLM_REDACT_PII_FOR_CLOUD: {{ .Values.config.llmRedactPiiForCloud | quote }}
+  LLM_BLOCK_PRIVILEGED_FOR_CLOUD: {{ .Values.config.llmBlockPrivilegedForCloud | quote }}
+  RETENTION_SWEEP_ENABLED: {{ .Values.config.retentionSweepEnabled | quote }}
+  RETENTION_SWEEP_INTERVAL_HOURS: {{ .Values.config.retentionSweepIntervalHours | quote }}
+  OTEL_ENABLED: {{ .Values.config.otelEnabled | quote }}
+  OTEL_SERVICE_NAME: {{ .Values.config.otelServiceName | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otelExporterOtlpEndpoint | quote }}

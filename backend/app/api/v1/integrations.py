@@ -27,6 +27,7 @@ from app.schemas.integrations import (
     WebhookCreate,
     WebhookRead,
     WebhookTestResult,
+    WebhookUpdate,
     WordRedlineItem,
     WordRedlinePayloadResponse,
 )
@@ -198,6 +199,34 @@ async def create_webhook(
         is_active=True,
     )
     session.add(sub)
+    await session.commit()
+    await session.refresh(sub)
+    return WebhookRead.model_validate(sub)
+
+
+@router.patch("/integrations/webhooks/{webhook_id}", response_model=WebhookRead)
+async def update_webhook(
+    webhook_id: uuid.UUID,
+    payload: WebhookUpdate,
+    current_user: User = Depends(require_roles("partner", "associate")),
+    session: AsyncSession = Depends(get_db),
+) -> WebhookRead:
+    """Update webhook name, active status, or subscribed event list."""
+    sub = await session.get(WebhookSubscription, webhook_id)
+    if sub is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found.")
+    if (
+        sub.organization_id is not None
+        and current_user.organization_id is not None
+        and sub.organization_id != current_user.organization_id
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+    if payload.name is not None:
+        sub.name = payload.name.strip()
+    if payload.is_active is not None:
+        sub.is_active = payload.is_active
+    if payload.events is not None:
+        sub.events_json = payload.events
     await session.commit()
     await session.refresh(sub)
     return WebhookRead.model_validate(sub)

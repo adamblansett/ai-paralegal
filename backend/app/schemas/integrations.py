@@ -24,8 +24,15 @@ class WebhookCreate(BaseModel):
             "finding.escalated",
             "legal_hold.changed",
             "batch_review.completed",
+            "retention.sweep_completed",
         ]
     )
+
+
+class WebhookUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    is_active: bool | None = None
+    events: list[str] | None = None
 
 
 class WebhookRead(BaseModel):

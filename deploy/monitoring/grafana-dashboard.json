@@ -1,0 +1,111 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP Request Rate by Status Class",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(ai_paralegal_http_requests_total[5m]))",
+          "legendFormat": "HTTP {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Average HTTP Latency (seconds)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(ai_paralegal_http_request_duration_seconds_sum[5m])) / clamp_min(sum(rate(ai_paralegal_http_request_duration_seconds_count[5m])), 0.001)",
+          "legendFormat": "avg duration (s)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "LLM Structured Calls by Provider & Status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (provider, status) (rate(ai_paralegal_llm_calls_total[5m]))",
+          "legendFormat": "{{provider}} ({{status}})"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Cumulative Cloud LLM Estimated Spend (USD)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(ai_paralegal_llm_estimated_cost_usd_total)",
+          "legendFormat": "USD"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Citation Grounding Failures Caught",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        {
+          "expr": "ai_paralegal_citation_grounding_failures_total",
+          "legendFormat": "Grounding Escalations"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Outbound Cloud PII Redactions & OCR Pages",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (entity_type) (increase(ai_paralegal_pii_redactions_total[1h]))",
+          "legendFormat": "PII {{entity_type}}"
+        },
+        {
+          "expr": "sum by (backend) (increase(ai_paralegal_ocr_pages_total[1h]))",
+          "legendFormat": "OCR {{backend}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Webhook Deliveries & Retention Purges",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (channel_type, status) (increase(ai_paralegal_webhook_deliveries_total[1h]))",
+          "legendFormat": "Webhook {{channel_type}} ({{status}})"
+        },
+        {
+          "expr": "increase(ai_paralegal_retention_purged_documents_total[24h])",
+          "legendFormat": "Retention Purged (24h)"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["ai-paralegal", "legal-ops", "llm"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "AI Paralegal — Legal Ops & LLM Governance",
+  "uid": "ai-paralegal-overview",
+  "version": 1
+}

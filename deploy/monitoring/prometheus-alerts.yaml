@@ -1,0 +1,93 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ai-paralegal-alerts
+  namespace: ai-paralegal
+  labels:
+    release: prometheus
+    app.kubernetes.io/part-of: ai-paralegal
+spec:
+  groups:
+    - name: ai-paralegal.api.availability
+      rules:
+        - alert: AIParalegalHigh5xxRate
+          expr: |
+            (
+              sum(rate(ai_paralegal_http_requests_total{status=~"5.."}[5m]))
+              /
+              clamp_min(sum(rate(ai_paralegal_http_requests_total[5m])), 0.001)
+            ) > 0.02
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "AI Paralegal API 5xx error rate exceeds 2%"
+            description: "More than 2% of API HTTP responses returned 5xx over the last 5 minutes."
+
+        - alert: AIParalegalHighAPILatency
+          expr: |
+            (
+              sum(rate(ai_paralegal_http_request_duration_seconds_sum[5m]))
+              /
+              clamp_min(sum(rate(ai_paralegal_http_request_duration_seconds_count[5m])), 0.001)
+            ) > 2.0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "AI Paralegal average API latency above 2 seconds"
+            description: "Average HTTP request duration exceeded 2.0s over 10 minutes."
+
+        - alert: AIParalegalTargetDown
+          expr: up{job="ai-paralegal-api"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "AI Paralegal API scrape target down"
+            description: "Prometheus cannot scrape /metrics from an AI Paralegal API instance."
+
+    - name: ai-paralegal.llm.governance
+      rules:
+        - alert: AIParalegalLLMErrorSpike
+          expr: |
+            (
+              sum(rate(ai_paralegal_llm_calls_total{status="error"}[5m]))
+              /
+              clamp_min(sum(rate(ai_paralegal_llm_calls_total[5m])), 0.001)
+            ) > 0.15
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "AI Paralegal LLM provider failure rate exceeds 15%"
+            description: "Inspect Ollama/Gemini connectivity and fallback routing logs."
+
+        - alert: AIParalegalCitationGroundingFailureSpike
+          expr: increase(ai_paralegal_citation_grounding_failures_total[15m]) > 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Elevated citation grounding failures caught by verifier"
+            description: "More than 10 unverified LLM citations were flagged for escalation in 15m."
+
+        - alert: AIParalegalDailyLLMSpendHigh
+          expr: sum(increase(ai_paralegal_llm_estimated_cost_usd_total[24h])) > 50
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Estimated daily cloud LLM spend exceeds $50 USD"
+            description: "Review task routing rules or increase local Ollama model usage."
+
+    - name: ai-paralegal.integrations.compliance
+      rules:
+        - alert: AIParalegalWebhookDeliveryFailures
+          expr: increase(ai_paralegal_webhook_deliveries_total{status="failed"}[15m]) > 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Escalation webhook deliveries are failing"
+            description: "Outbound Slack/Teams/webhook escalation notifications failed retries."

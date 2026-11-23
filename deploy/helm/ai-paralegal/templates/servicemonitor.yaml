@@ -1,0 +1,17 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ai-paralegal.fullname" . }}-api
+  labels:
+    {{- include "ai-paralegal.labels" . | nindent 4 }}
+    release: {{ .Values.monitoring.serviceMonitor.releaseLabel }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+{{- end }}

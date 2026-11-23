@@ -185,3 +185,12 @@ npm run build
 npx playwright install chromium
 npm run test:e2e
 ```
+
+---
+
+## Enterprise Governance, Observability & Deployment Packaging
+
+- **PostgreSQL RLS Enforcement ([deploy/sql/rls_policies.sql](deploy/sql/rls_policies.sql), [backend/app/db/rls.py](backend/app/db/rls.py)):** Authenticated PostgreSQL sessions automatically execute `set_config('app.current_organization_id', ..., true)` with `after_begin` transaction propagation alongside `FORCE ROW LEVEL SECURITY` policies.
+- **Cryptographic OIDC JWKS Verification & Role Sync ([backend/app/core/oidc.py](backend/app/core/oidc.py)):** Verifies RS256/RS384/RS512 (plus ES256–ES512 when `cryptography` is installed) OIDC ID tokens against cached JWKS keys with automatic key-rotation refresh and on-login group-to-role synchronization.
+- **Automated Retention & Legal-Hold Purge Worker ([backend/app/services/retention.py](backend/app/services/retention.py)):** Celery Beat schedules periodic `ai_paralegal.retention_sweep` jobs (plus on-demand partner preview/execute in the **Admin & Integrations** modal) that purge expired non-held documents while preserving items under active Legal Hold and recording hash-chained `AuditLog` entries.
+- **OpenTelemetry, Grafana & Helm ([deploy/monitoring/](deploy/monitoring/), [deploy/helm/ai-paralegal/](deploy/helm/ai-paralegal/)):** W3C `traceparent` propagation across FastAPI, LLM routing, and Celery tasks, paired with Prometheus alerting rules, Grafana dashboard JSON, and a parameterized Helm v3 chart.

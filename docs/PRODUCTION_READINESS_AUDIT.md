@@ -60,3 +60,10 @@
 - **Evidence:** `backend/app/services/audit.py`, `backend/app/api/v1/matters.py`, `backend/app/api/v1/documents.py`
 - **Production Impact:** Deleted matters/documents could violate spoliation holds, and database-level row edits to historical audit logs were undetectable.
 - **Remediation:** Implemented SHA-256 hash chaining (`sequence_number`, `previous_hash`, `entry_hash`) verified via `GET /api/v1/matters/{id}/audit-logs/verify`, plus cascading litigation legal-hold locks blocking deletes with HTTP `409 Conflict`.
+
+### 8. `[HARDENING-FOLLOWUPS]` Live RLS Context, Cryptographic OIDC JWKS, Scheduled Retention & OTel
+- **Follow-up Hardening Applied:**
+  - Wired `set_tenant_rls_context()` into `get_current_user()` (`backend/app/db/rls.py`, `backend/app/api/deps.py`) with `FORCE ROW LEVEL SECURITY` policies and live PostgreSQL/Redis integration coverage.
+  - Upgraded `/api/v1/auth/oidc/exchange` to cryptographic JWKS ID-token signature/claim verification (`backend/app/core/oidc.py`) with key-rotation refresh and on-login role sync.
+  - Added legal-hold-aware `run_retention_sweep()` (`backend/app/services/retention.py`) wired to Celery Beat and partner Admin endpoints + UI (`AdminIntegrationsModal.tsx`).
+  - Added OpenTelemetry W3C tracing (`backend/app/core/telemetry.py`), extended webhook/retention Prometheus metrics, `deploy/monitoring/` alerts/Grafana assets, and `deploy/helm/ai-paralegal/`.

@@ -13,6 +13,7 @@ export type PrivilegeStatus =
 
 export interface UserProfile {
   id: string;
+  organization_id?: string | null;
   email: string;
   full_name: string;
   role: UserRole;
@@ -383,4 +384,65 @@ export interface DMSFileItem {
   size_bytes: number;
   modified_at: string;
   source_uri: string;
+}
+
+export type WebhookChannelType = 'webhook' | 'slack' | 'teams';
+
+export interface WebhookSubscription {
+  id: string;
+  organization_id: string | null;
+  matter_id: string | null;
+  name: string;
+  channel_type: WebhookChannelType;
+  target_url: string;
+  events_json: string[];
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface WebhookCreateInput {
+  name: string;
+  channel_type: WebhookChannelType;
+  target_url: string;
+  signing_secret?: string;
+  matter_id?: string | null;
+  events?: string[];
+}
+
+export interface WebhookTestResult {
+  delivered: boolean;
+  status_code: number | null;
+  error: string | null;
+}
+
+export interface OrganizationInfo {
+  id: string;
+  slug: string;
+  name: string;
+  retention_days: number;
+  is_active: boolean;
+  created_at: string;
+  user_count: number;
+  matter_count: number;
+  webhook_count: number;
+}
+
+export interface RetentionSweepItem {
+  document_id: string;
+  matter_id: string;
+  filename: string;
+  action: 'purged' | 'eligible_for_purge' | 'skipped_legal_hold';
+  reason: string;
+  retention_until: string | null;
+}
+
+export interface RetentionSweepReport {
+  organization_id: string | null;
+  dry_run: boolean;
+  as_of: string;
+  evaluated_count: number;
+  purged_count: number;
+  eligible_count: number;
+  skipped_legal_hold_count: number;
+  items: RetentionSweepItem[];
 }

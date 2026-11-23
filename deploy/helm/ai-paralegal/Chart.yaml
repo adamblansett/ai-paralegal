@@ -1,0 +1,14 @@
+apiVersion: v2
+name: ai-paralegal
+description: Enterprise AI Paralegal platform for legal document ingestion, contract review, discovery synthesis, and human attorney oversight.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - legal-ops
+  - fastapi
+  - pgvector
+  - celery
+  - opentelemetry
+maintainers:
+  - name: AI Paralegal Maintainers

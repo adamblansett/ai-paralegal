@@ -7,11 +7,13 @@ import {
   Loader2,
   Lock,
   Scale,
+  Settings2,
   ShieldAlert,
   Unlock,
   Users,
 } from 'lucide-react';
 import { api, tokenStore } from './api/client';
+import { AdminIntegrationsModal } from './components/AdminIntegrationsModal';
 import { AuthGate } from './components/AuthGate';
 import { ContractReviewTab } from './components/ContractReviewTab';
 import { DisclaimerBanner } from './components/DisclaimerBanner';
@@ -51,6 +53,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('documents');
   const [modalOpen, setModalOpen] = useState(false);
   const [teamModalOpen, setTeamModalOpen] = useState(false);
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
   const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
   const [sourceTarget, setSourceTarget] = useState<SourceViewerTarget | null>(null);
   const [loading, setLoading] = useState(false);
@@ -320,6 +323,15 @@ export default function App() {
                     <Users className="h-3.5 w-3.5 text-indigo-600" />
                     Team Access
                   </button>
+                  <button
+                    type="button"
+                    data-testid="admin-integrations-btn"
+                    onClick={() => setAdminModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    <Settings2 className="h-3.5 w-3.5 text-indigo-600" />
+                    Admin & Integrations
+                  </button>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5">
                     <span className="text-slate-500">Docs:</span>{' '}
                     <strong className="text-slate-900">{activeMatter.stats.document_count}</strong>
@@ -445,6 +457,14 @@ export default function App() {
         onCreated={(pb) => {
           setPlaybooks((prev) => [...prev, pb]);
         }}
+      />
+
+      <AdminIntegrationsModal
+        open={adminModalOpen}
+        currentUser={currentUser}
+        matterId={activeMatter?.id ?? null}
+        onClose={() => setAdminModalOpen(false)}
+        onRefresh={refreshMatterData}
       />
 
       <SourceViewerDrawer target={sourceTarget} onClose={() => setSourceTarget(null)} />

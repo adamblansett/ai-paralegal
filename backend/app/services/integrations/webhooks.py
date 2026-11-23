@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.core.metrics import metrics_registry
 from app.models.organization import WebhookSubscription
 
 logger = structlog.get_logger(__name__)
@@ -154,6 +155,7 @@ async def send_single_webhook(
                 resp = await client.post(sub.target_url, content=body_bytes, headers=headers)
                 last_status = resp.status_code
                 if 200 <= resp.status_code < 300:
+                    metrics_registry.record_webhook_delivery(sub.channel_type, True)
                     return True, resp.status_code, None
                 last_error = f"HTTP {resp.status_code}"
                 if resp.status_code < 500:
@@ -164,6 +166,7 @@ async def send_single_webhook(
             if attempt < max_attempts:
                 await asyncio.sleep(0.15 * (2 ** (attempt - 1)))
 
+    metrics_registry.record_webhook_delivery(sub.channel_type, False)
     return False, last_status, last_error
 
 

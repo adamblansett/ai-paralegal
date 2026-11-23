@@ -1,0 +1,68 @@
+name: Live LLM Evaluations
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Provider to evaluate (mock, gemini, ollama, or all)"
+        required: true
+        default: "gemini"
+        type: choice
+        options:
+          - mock
+          - gemini
+          - ollama
+          - all
+      gemini_model:
+        description: "Gemini model override (when provider=gemini or all)"
+        required: false
+        default: "gemini-2.5-flash"
+      ollama_base_url:
+        description: "Reachable Ollama base URL (optional)"
+        required: false
+        default: ""
+      ollama_model:
+        description: "Ollama model name (optional)"
+        required: false
+        default: "llama-3.1-8b-instruct"
+
+jobs:
+  run-live-evals:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,docx]"
+      - name: Execute evaluation scorecard
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OLLAMA_BASE_URL: ${{ inputs.ollama_base_url || 'http://localhost:11434' }}
+        run: |
+          if [ "${{ inputs.provider }}" = "all" ]; then
+            python -m evals.runner --probe-live --markdown > scorecard.md
+            python -m evals.runner --probe-live --json > scorecard.json
+          elif [ "${{ inputs.provider }}" = "gemini" ]; then
+            python -m evals.runner --provider gemini --model "${{ inputs.gemini_model }}" --markdown > scorecard.md
+            python -m evals.runner --provider gemini --model "${{ inputs.gemini_model }}" --json > scorecard.json
+          elif [ "${{ inputs.provider }}" = "ollama" ]; then
+            python -m evals.runner --provider ollama --model "${{ inputs.ollama_model }}" --markdown > scorecard.md
+            python -m evals.runner --provider ollama --model "${{ inputs.ollama_model }}" --json > scorecard.json
+          else
+            python -m evals.runner --provider mock --markdown > scorecard.md
+            python -m evals.runner --provider mock --json > scorecard.json
+          fi
+          cat scorecard.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llm-eval-scorecard
+          path: |
+            backend/scorecard.md
+            backend/scorecard.json

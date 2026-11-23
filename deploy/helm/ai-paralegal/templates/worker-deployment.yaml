@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-paralegal.fullname" . }}-worker
+  labels:
+    {{- include "ai-paralegal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "ai-paralegal.fullname" . }}-worker
+  template:
+    metadata:
+      labels:
+        {{- include "ai-paralegal.labels" . | nindent 8 }}
+        app: {{ include "ai-paralegal.fullname" . }}-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: worker
+          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag }}"
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - app.workers.celery_app
+            - worker
+            - --loglevel=info
+            - --concurrency={{ .Values.worker.concurrency }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "ai-paralegal.fullname" . }}-config
+            - secretRef:
+                name: {{ include "ai-paralegal.secretName" . }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+            - name: storage-scratch
+              mountPath: /data/storage
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
+        - name: storage-scratch
+          emptyDir: {}
+{{- if .Values.beat.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-paralegal.fullname" . }}-beat
+  labels:
+    {{- include "ai-paralegal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "ai-paralegal.fullname" . }}-beat
+  template:
+    metadata:
+      labels:
+        {{- include "ai-paralegal.labels" . | nindent 8 }}
+        app: {{ include "ai-paralegal.fullname" . }}-beat
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: beat
+          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag }}"
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - app.workers.celery_app
+            - beat
+            - --loglevel=info
+            - --schedule=/tmp/celerybeat-schedule
+          envFrom:
+            - configMapRef:
+                name: {{ include "ai-paralegal.fullname" . }}-config
+            - secretRef:
+                name: {{ include "ai-paralegal.secretName" . }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.beat.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-paralegal.fullname" . }}-frontend
+  labels:
+    {{- include "ai-paralegal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "ai-paralegal.fullname" . }}-frontend
+  template:
+    metadata:
+      labels:
+        {{- include "ai-paralegal.labels" . | nindent 8 }}
+        app: {{ include "ai-paralegal.fullname" . }}-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+      containers:
+        - name: frontend
+          image: "{{ .Values.image.frontend.repository }}:{{ .Values.image.frontend.tag }}"
+          imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    {{- include "ai-paralegal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  selector:
+    app: {{ include "ai-paralegal.fullname" . }}-frontend
+  ports:
+    - name: http
+      port: {{ .Values.frontend.servicePort }}
+      targetPort: http

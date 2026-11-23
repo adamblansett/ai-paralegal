@@ -12,6 +12,7 @@ from app.core.config import Settings, get_settings, validate_production_security
 from app.core.logging import configure_logging
 from app.core.middleware import SecurityAndObservabilityMiddleware
 from app.core.rate_limit import SlidingWindowRateLimiter
+from app.core.telemetry import configure_telemetry
 from app.db.session import dispose_engine, get_session_factory
 from app.services.seed import seed_defaults
 
@@ -62,6 +63,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
 
     app.add_api_route("/metrics", prometheus_metrics_endpoint, methods=["GET"], tags=["telemetry"])
     app.include_router(api_v1_router, prefix=cfg.api_v1_prefix)
+    configure_telemetry(cfg, app)
     return app
 
 

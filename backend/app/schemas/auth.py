@@ -61,6 +61,8 @@ class AuthProvidersResponse(BaseModel):
 
 class OIDCExchangeRequest(BaseModel):
     id_token: str = Field(..., min_length=10)
+    nonce: str | None = Field(default=None, max_length=256)
+    access_token: str | None = Field(default=None, min_length=10)
 
 
 class MatterMemberAdd(BaseModel):

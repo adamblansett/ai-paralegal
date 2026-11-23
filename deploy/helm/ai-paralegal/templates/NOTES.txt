@@ -1,0 +1,7 @@
+AI Paralegal ({{ .Chart.AppVersion }}) has been deployed to namespace {{ .Release.Namespace }}.
+
+1. Check API readiness:
+   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Apply PostgreSQL RLS policies as database administrator:
+   psql "$DATABASE_URL" -f deploy/sql/rls_policies.sql

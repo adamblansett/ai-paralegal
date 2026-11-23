@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.security import TokenError, decode_access_token
+from app.db.rls import set_tenant_rls_context
 from app.db.session import get_db as _get_db
 from app.llm.embeddings import EmbeddingService
 from app.llm.router import ModelRouter
@@ -83,6 +84,7 @@ async def get_current_user(
             detail="Authenticated user account not found or inactive.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    await set_tenant_rls_context(session, user.organization_id)
     return user
 
 

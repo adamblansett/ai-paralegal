@@ -14,11 +14,13 @@ import type {
   Matter,
   MatterCreateInput,
   MatterMember,
+  OrganizationInfo,
   Playbook,
   PlaybookRule,
   PortfolioRiskMatrix,
   PrivilegeStatus,
   ResearchQueryResponse,
+  RetentionSweepReport,
   ReviewStatus,
   ReviewTaskItem,
   SearchResponse,
@@ -26,6 +28,9 @@ import type {
   TokenResponse,
   UserProfile,
   UserRole,
+  WebhookCreateInput,
+  WebhookSubscription,
+  WebhookTestResult,
 } from '../types/api';
 
 const API_BASE = '/api/v1';
@@ -384,7 +389,7 @@ export const api = {
   verifyAuditChain: (matterId: string) =>
     apiRequest<AuditChainVerification>(`/matters/${matterId}/audit-logs/verify`),
 
-  // DMS Integrations
+  // DMS Integrations, Webhooks & Enterprise Admin
   listDMSProviders: () => apiRequest<DMSProviderInfo[]>('/integrations/dms/providers'),
   listDMSFiles: (provider: string) =>
     apiRequest<DMSFileItem[]>(`/integrations/dms/${encodeURIComponent(provider)}/files`),
@@ -392,6 +397,47 @@ export const api = {
     apiRequest<DocumentUploadResponse>(`/matters/${matterId}/integrations/dms/import`, {
       method: 'POST',
       body: JSON.stringify({ provider, external_id: externalId, document_type: documentType }),
+    }),
+  listWebhooks: () => apiRequest<WebhookSubscription[]>('/integrations/webhooks'),
+  createWebhook: (payload: WebhookCreateInput) =>
+    apiRequest<WebhookSubscription>('/integrations/webhooks', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateWebhook: (
+    webhookId: string,
+    payload: { name?: string; is_active?: boolean; events?: string[] }
+  ) =>
+    apiRequest<WebhookSubscription>(`/integrations/webhooks/${webhookId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteWebhook: (webhookId: string) =>
+    apiRequest<void>(`/integrations/webhooks/${webhookId}`, { method: 'DELETE' }),
+  testWebhook: (webhookId: string) =>
+    apiRequest<WebhookTestResult>(`/integrations/webhooks/${webhookId}/test`, {
+      method: 'POST',
+    }),
+  getOrganization: () => apiRequest<OrganizationInfo>('/admin/organization'),
+  updateOrganization: (payload: { name?: string; retention_days?: number }) =>
+    apiRequest<OrganizationInfo>('/admin/organization', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  updateAdminUser: (userId: string, payload: { role?: UserRole; is_active?: boolean }) =>
+    apiRequest<UserProfile>(`/admin/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  runRetentionSweep: (payload: { dry_run: boolean; as_of?: string }) =>
+    apiRequest<RetentionSweepReport>('/admin/retention/sweep', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateDocumentRetention: (documentId: string, retention_until: string | null) =>
+    apiRequest<DocumentItem>(`/documents/${documentId}/retention`, {
+      method: 'PATCH',
+      body: JSON.stringify({ retention_until }),
     }),
 
   matterEventsUrl: (matterId: string) =>

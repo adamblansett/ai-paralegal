@@ -62,6 +62,8 @@ class MetricsRegistry:
             self._pii_redactions: dict[tuple[str, str], int] = defaultdict(int)
             self._ocr_pages: dict[tuple[str, str], int] = defaultdict(int)
             self._grounding_failures: int = 0
+            self._webhook_deliveries: dict[tuple[str, str], int] = defaultdict(int)
+            self._retention_purged: int = 0
 
     def record_http_request(
         self,
@@ -115,6 +117,17 @@ class MetricsRegistry:
         with self._lock:
             self._grounding_failures += count
 
+    def record_webhook_delivery(self, channel_type: str, delivered: bool) -> None:
+        outcome = "delivered" if delivered else "failed"
+        with self._lock:
+            self._webhook_deliveries[(channel_type, outcome)] += 1
+
+    def record_retention_purge(self, count: int = 1) -> None:
+        if count <= 0:
+            return
+        with self._lock:
+            self._retention_purged += count
+
     def summary(self) -> dict[str, Any]:
         with self._lock:
             total_http = sum(self._http_requests.values())
@@ -146,6 +159,8 @@ class MetricsRegistry:
                 "pii_redactions_total": total_redactions,
                 "ocr_pages_processed_total": total_ocr,
                 "citation_grounding_failures_total": self._grounding_failures,
+                "webhook_deliveries_total": sum(self._webhook_deliveries.values()),
+                "retention_purged_documents_total": self._retention_purged,
             }
 
     def render_prometheus(self) -> str:
@@ -256,6 +271,28 @@ class MetricsRegistry:
                     "Unverified LLM citations caught.",
                     "# TYPE ai_paralegal_citation_grounding_failures_total counter",
                     f"ai_paralegal_citation_grounding_failures_total {self._grounding_failures}",
+                ]
+            )
+
+            lines.extend(
+                [
+                    "# HELP ai_paralegal_webhook_deliveries_total "
+                    "Total outbound webhook delivery attempts.",
+                    "# TYPE ai_paralegal_webhook_deliveries_total counter",
+                ]
+            )
+            for (channel, status), val in sorted(self._webhook_deliveries.items()):
+                lines.append(
+                    f'ai_paralegal_webhook_deliveries_total{{channel_type="{_esc_label(channel)}",'
+                    f'status="{_esc_label(status)}"}} {val}'
+                )
+
+            lines.extend(
+                [
+                    "# HELP ai_paralegal_retention_purged_documents_total "
+                    "Total expired documents purged by retention compliance sweeps.",
+                    "# TYPE ai_paralegal_retention_purged_documents_total counter",
+                    f"ai_paralegal_retention_purged_documents_total {self._retention_purged}",
                 ]
             )
             return "\n".join(lines) + "\n"

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.core.config import Settings, get_settings
 from app.core.metrics import metrics_registry
+from app.core.telemetry import get_tracer
 from app.llm.providers import (
     OLLAMA_MODEL_ALIASES,
     GeminiProvider,
@@ -167,56 +168,68 @@ class ModelRouter:
         """Route a structured generation request across primary and fallback providers."""
         candidates = self._build_candidate_chain(provider=provider, enable_fallback=enable_fallback)
         errors: list[str] = []
+        tracer = get_tracer("ai_paralegal.llm")
 
-        for idx, candidate_name in enumerate(candidates):
-            prov = self.get_provider(candidate_name)
-            candidate_model = self.resolve_task_model(
-                candidate_name,
-                request.task_kind,
-                model if idx == 0 else None,
+        with tracer.start_as_current_span("llm.generate_structured") as span:
+            span.set_attribute("llm.task_kind", request.task_kind)
+            span.set_attribute(
+                "llm.requested_provider", provider or self.settings.llm_default_provider
             )
-            t0 = time.perf_counter()
-            try:
-                effective_request, redaction_summary = self._prepare_cloud_request(
-                    candidate_name, request
+
+            for idx, candidate_name in enumerate(candidates):
+                prov = self.get_provider(candidate_name)
+                candidate_model = self.resolve_task_model(
+                    candidate_name,
+                    request.task_kind,
+                    model if idx == 0 else None,
                 )
-                parsed, resolved_model, raw_text, usage = await prov.generate_structured(
-                    effective_request,
-                    schema_cls,
-                    model=candidate_model,
-                )
-                latency_ms = int((time.perf_counter() - t0) * 1000)
-                metrics_registry.record_llm_call(
-                    provider=prov.name,
-                    model_name=resolved_model,
-                    task_kind=request.task_kind,
-                    status="success",
-                    latency_ms=latency_ms,
-                    prompt_tokens=usage.prompt_tokens,
-                    completion_tokens=usage.completion_tokens,
-                )
-                return LLMResponse[T](
-                    provider=prov.name,
-                    model_name=resolved_model,
-                    data=parsed,
-                    raw_text=raw_text,
-                    token_usage=usage,
-                    latency_ms=latency_ms,
-                    fallback_used=idx > 0,
-                    fallback_errors=errors,
-                    redaction_summary=redaction_summary,
-                )
-            except ProviderError as exc:
-                latency_ms = int((time.perf_counter() - t0) * 1000)
-                metrics_registry.record_llm_call(
-                    provider=candidate_name,
-                    model_name=candidate_model or "default",
-                    task_kind=request.task_kind,
-                    status="error",
-                    latency_ms=latency_ms,
-                )
-                errors.append(f"{candidate_name}: {exc}")
-                continue
+                t0 = time.perf_counter()
+                try:
+                    effective_request, redaction_summary = self._prepare_cloud_request(
+                        candidate_name, request
+                    )
+                    parsed, resolved_model, raw_text, usage = await prov.generate_structured(
+                        effective_request,
+                        schema_cls,
+                        model=candidate_model,
+                    )
+                    latency_ms = int((time.perf_counter() - t0) * 1000)
+                    metrics_registry.record_llm_call(
+                        provider=prov.name,
+                        model_name=resolved_model,
+                        task_kind=request.task_kind,
+                        status="success",
+                        latency_ms=latency_ms,
+                        prompt_tokens=usage.prompt_tokens,
+                        completion_tokens=usage.completion_tokens,
+                    )
+                    span.set_attribute("llm.provider", prov.name)
+                    span.set_attribute("llm.model", resolved_model)
+                    span.set_attribute("llm.latency_ms", latency_ms)
+                    span.set_attribute("llm.fallback_used", idx > 0)
+                    span.set_attribute("llm.pii_redacted", bool(redaction_summary))
+                    return LLMResponse[T](
+                        provider=prov.name,
+                        model_name=resolved_model,
+                        data=parsed,
+                        raw_text=raw_text,
+                        token_usage=usage,
+                        latency_ms=latency_ms,
+                        fallback_used=idx > 0,
+                        fallback_errors=errors,
+                        redaction_summary=redaction_summary,
+                    )
+                except ProviderError as exc:
+                    latency_ms = int((time.perf_counter() - t0) * 1000)
+                    metrics_registry.record_llm_call(
+                        provider=candidate_name,
+                        model_name=candidate_model or "default",
+                        task_kind=request.task_kind,
+                        status="error",
+                        latency_ms=latency_ms,
+                    )
+                    errors.append(f"{candidate_name}: {exc}")
+                    continue
 
         raise ProviderError(
             "All LLM providers failed for structured generation: " + " | ".join(errors)

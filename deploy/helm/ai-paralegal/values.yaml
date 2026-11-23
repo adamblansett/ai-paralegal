@@ -1,0 +1,109 @@
+image:
+  backend:
+    repository: ghcr.io/adamblansett/ai-paralegal-backend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: ghcr.io/adamblansett/ai-paralegal-frontend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+api:
+  replicaCount: 2
+  port: 8000
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1536Mi
+
+worker:
+  replicaCount: 2
+  concurrency: 4
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+
+beat:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+frontend:
+  replicaCount: 2
+  port: 8080
+  servicePort: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+config:
+  appEnv: production
+  appName: "AI Paralegal"
+  logLevel: INFO
+  corsOrigins: "https://paralegal.example.com"
+  taskExecutionMode: celery
+  storageBackend: s3
+  s3ServerSideEncryption: aws:kms
+  rateLimitEnabled: "true"
+  rateLimitBackend: redis
+  eventBusBackend: redis
+  authAutoSeedDemoUsers: "false"
+  llmRedactPiiForCloud: "true"
+  llmBlockPrivilegedForCloud: "true"
+  retentionSweepEnabled: "true"
+  retentionSweepIntervalHours: "24"
+  otelEnabled: "false"
+  otelServiceName: ai-paralegal-api
+  otelExporterOtlpEndpoint: ""
+
+secrets:
+  existingSecret: ""
+  databaseUrl: "postgresql+asyncpg://paralegal:CHANGE_ME@postgres.ai-paralegal.svc:5432/ai_paralegal"
+  redisUrl: "rediss://redis.ai-paralegal.svc:6379/0"
+  celeryBrokerUrl: "rediss://redis.ai-paralegal.svc:6379/0"
+  celeryResultBackend: "rediss://redis.ai-paralegal.svc:6379/1"
+  authSecretKey: "REPLACE_WITH_KMS_OR_CSPRNG_64_BYTE_SECRET_KEY"
+  s3Bucket: "ai-paralegal-prod-vault"
+  s3KmsKeyId: ""
+  geminiApiKey: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  host: paralegal.example.com
+  tlsSecretName: ai-paralegal-tls
+  clusterIssuer: letsencrypt-prod
+
+networkPolicy:
+  enabled: true
+  ingressNamespaceLabel: ingress-nginx
+
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    releaseLabel: prometheus

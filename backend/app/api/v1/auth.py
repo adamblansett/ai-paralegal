@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_settings, get_current_user, get_db
 from app.core.config import Settings
+from app.core.oidc import OIDCVerificationError, default_jwks_cache, verify_oidc_id_token
 from app.core.rate_limit import rate_limit_auth
 from app.core.security import (
     ALLOWED_ROLES,
@@ -356,21 +357,30 @@ async def oidc_exchange(
             detail="OIDC_ISSUER_URL is not configured.",
         )
 
-    discovery_url = f"{settings.oidc_issuer_url.rstrip('/')}/.well-known/openid-configuration"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            disc_resp = await client.get(discovery_url)
-            disc_resp.raise_for_status()
-            disc_data: dict[str, Any] = disc_resp.json()
+        claims = await verify_oidc_id_token(
+            payload.id_token,
+            settings,
+            nonce=payload.nonce,
+        )
+        if not claims.get("email") and payload.access_token:
+            disc_data = await default_jwks_cache.get_discovery(settings.oidc_issuer_url)
             userinfo_ep = str(disc_data.get("userinfo_endpoint") or "")
-            if not userinfo_ep:
-                raise ValueError("OIDC discovery missing userinfo_endpoint.")
-            ui_resp = await client.get(
-                userinfo_ep,
-                headers={"Authorization": f"Bearer {payload.id_token}"},
-            )
-            ui_resp.raise_for_status()
-            claims: dict[str, Any] = ui_resp.json()
+            if userinfo_ep:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    ui_resp = await client.get(
+                        userinfo_ep,
+                        headers={"Authorization": f"Bearer {payload.access_token}"},
+                    )
+                    ui_resp.raise_for_status()
+                    ui_claims = ui_resp.json()
+                    if isinstance(ui_claims, dict):
+                        claims = {**ui_claims, **claims}
+    except OIDCVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"OIDC token verification failed: {exc}",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -387,6 +397,7 @@ async def oidc_exchange(
     user = (
         await session.execute(select(User).where(User.email == email))
     ).scalar_one_or_none()
+    has_role_claim = settings.oidc_role_claim in claims
     if user is None:
         full_name = str(claims.get("name") or email.split("@")[0]).strip()
         resolved_role = map_oidc_groups_to_role(claims, settings)
@@ -409,11 +420,21 @@ async def oidc_exchange(
         session.add(user)
         await session.flush()
         await session.refresh(user)
-    elif not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is disabled.",
-        )
+    else:
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is disabled.",
+            )
+        if has_role_claim:
+            synced_role = map_oidc_groups_to_role(claims, settings)
+            if user.role != synced_role:
+                user.role = synced_role
+        if claims.get("name"):
+            synced_name = str(claims["name"]).strip()
+            if synced_name and user.full_name != synced_name:
+                user.full_name = synced_name
+        await session.flush()
 
     return await _issue_token_pair(session, user, settings)
 

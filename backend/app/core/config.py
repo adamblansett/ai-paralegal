@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     event_bus_backend: Literal["memory", "redis", "auto"] = "memory"
     otel_enabled: bool = False
     otel_service_name: str = "ai-paralegal-api"
+    otel_exporter_otlp_endpoint: str = ""
+    otel_sample_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
+
+    # Automated Data Retention & Compliance Sweeps
+    retention_sweep_enabled: bool = True
+    retention_sweep_interval_hours: int = Field(default=24, ge=1, le=720)
 
     # OCR / Scanned PDF Pipeline
     ocr_backend: Literal["auto", "tesseract", "mock", "disabled"] = "auto"

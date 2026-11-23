@@ -3,6 +3,7 @@ import uuid
 from typing import Any
 
 from app.core.config import get_settings
+from app.core.telemetry import get_tracer
 from app.db.session import build_worker_session_factory
 from app.llm.embeddings import EmbeddingService
 from app.llm.router import ModelRouter
@@ -10,8 +11,11 @@ from app.services.contract_review import run_batch_contract_review, run_contract
 from app.services.discovery import run_discovery_synthesis
 from app.services.drafting import run_draft_generation
 from app.services.ingestion import process_document
+from app.services.retention import run_retention_sweep
 from app.storage import get_storage_backend
 from app.workers.celery_app import celery_app
+
+_tracer = get_tracer("ai_paralegal.worker")
 
 
 async def _ingest_async(document_id: str, review_task_id: str | None) -> dict[str, Any]:
@@ -135,7 +139,9 @@ async def _draft_generation_async(
 @celery_app.task(name="ai_paralegal.ingest_document")
 def ingest_document_task(document_id: str, review_task_id: str | None = None) -> dict[str, Any]:
     """Celery task to parse, chunk, and embed an uploaded legal document."""
-    return asyncio.run(_ingest_async(document_id, review_task_id))
+    with _tracer.start_as_current_span("celery.ingest_document") as span:
+        span.set_attribute("legal.document_id", document_id)
+        return asyncio.run(_ingest_async(document_id, review_task_id))
 
 
 @celery_app.task(name="ai_paralegal.contract_review")
@@ -150,18 +156,20 @@ def contract_review_task(
     model: str | None = None,
 ) -> dict[str, Any]:
     """Celery task to run contract/clause review on a matter."""
-    return asyncio.run(
-        _contract_review_async(
-            matter_id,
-            task_id,
-            document_ids,
-            clause_types,
-            playbook_notes,
-            playbook_id,
-            provider,
-            model,
+    with _tracer.start_as_current_span("celery.contract_review") as span:
+        span.set_attribute("legal.matter_id", matter_id)
+        return asyncio.run(
+            _contract_review_async(
+                matter_id,
+                task_id,
+                document_ids,
+                clause_types,
+                playbook_notes,
+                playbook_id,
+                provider,
+                model,
+            )
         )
-    )
 
 
 async def _batch_contract_review_async(
@@ -249,8 +257,36 @@ def draft_generation_task(
     model: str | None = None,
 ) -> dict[str, Any]:
     """Celery task to generate a citation-grounded legal draft."""
-    return asyncio.run(
-        _draft_generation_async(
-            matter_id, task_id, draft_type, instructions, document_ids, provider, model
+    with _tracer.start_as_current_span("celery.draft_generation") as span:
+        span.set_attribute("legal.matter_id", matter_id)
+        return asyncio.run(
+            _draft_generation_async(
+                matter_id, task_id, draft_type, instructions, document_ids, provider, model
+            )
         )
-    )
+
+
+async def _retention_sweep_async(dry_run: bool = False) -> dict[str, Any]:
+    cfg = get_settings()
+    engine, factory = build_worker_session_factory(cfg)
+    storage = get_storage_backend(cfg)
+    try:
+        async with factory() as session:
+            report = await run_retention_sweep(
+                session,
+                storage,
+                dry_run=dry_run,
+                actor_id="system:retention_worker",
+                settings=cfg,
+            )
+            return report.model_dump(mode="json")
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(name="ai_paralegal.retention_sweep")
+def retention_sweep_task(dry_run: bool = False) -> dict[str, Any]:
+    """Scheduled Celery Beat task to purge expired non-held legal documents."""
+    with _tracer.start_as_current_span("celery.retention_sweep") as span:
+        span.set_attribute("retention.dry_run", dry_run)
+        return asyncio.run(_retention_sweep_async(dry_run=dry_run))

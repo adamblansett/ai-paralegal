@@ -31,6 +31,7 @@ from app.llm.embeddings import EmbeddingService
 from app.models.document import Document, DocumentChunk
 from app.models.review_task import ReviewTask
 from app.models.user import User
+from app.schemas.admin import DocumentRetentionUpdate
 from app.schemas.document import (
     BatesStampRequest,
     BatesStampResponse,
@@ -41,6 +42,7 @@ from app.schemas.document import (
 )
 from app.services.ingestion import upload_document
 from app.services.production import apply_bates_stamps, update_document_privilege
+from app.services.retention import update_document_retention
 from app.storage.base import StorageBackend
 from app.workers.dispatch import dispatch_ingestion
 
@@ -277,6 +279,26 @@ async def set_document_privilege(
         doc=doc,
         privilege_status=payload.privilege_status,
         privilege_reason=payload.privilege_reason,
+        actor_id=format_actor_id(current_user),
+    )
+    return DocumentRead.model_validate(updated)
+
+
+@router.patch("/documents/{document_id}/retention", response_model=DocumentRead)
+async def set_document_retention(
+    document_id: uuid.UUID,
+    payload: DocumentRetentionUpdate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> DocumentRead:
+    """Set or clear a custom retention expiration timestamp for a matter document."""
+    doc = await require_document_access(
+        session, document_id=document_id, user=current_user, write=True
+    )
+    updated = await update_document_retention(
+        session,
+        doc=doc,
+        retention_until=payload.retention_until,
         actor_id=format_actor_id(current_user),
     )
     return DocumentRead.model_validate(updated)
