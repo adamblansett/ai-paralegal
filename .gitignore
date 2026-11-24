@@ -20,8 +20,8 @@ htmlcov/
 *.sqlite3
 *.db-journal
 *.db-wal
-storage/
-backend/storage/
+/storage/
+/backend/storage/
 
 # Environment
 .env
