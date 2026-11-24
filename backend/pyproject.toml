@@ -7,6 +7,7 @@ name = "ai-paralegal-backend"
 version = "0.1.0"
 description = "Production-ready AI Paralegal backend for legal document ingestion, contract review, discovery synthesis, and citation-grounded drafting."
 requires-python = ">=3.12"
+license = {text = "MIT"}
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
