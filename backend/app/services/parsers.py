@@ -247,7 +247,14 @@ def _parse_docx_with_python_docx(data: bytes) -> ParsedDocument | None:
         if not text:
             continue
         style_name = (para.style.name if para.style else "") or ""
-        if style_name.lower().startswith("heading"):
+        p_elem = getattr(para, "_p", None)
+        p_pr = getattr(p_elem, "pPr", None)
+        p_style = getattr(p_pr, "pStyle", None)
+        raw_style_val = str(getattr(p_style, "val", "") or getattr(p_elem, "style", "") or "")
+        is_heading_style = style_name.lower().startswith("heading") or (
+            raw_style_val.lower().startswith("heading")
+        )
+        if is_heading_style:
             current_heading = text[:255]
         elif heading := _is_heading(text):
             current_heading = heading

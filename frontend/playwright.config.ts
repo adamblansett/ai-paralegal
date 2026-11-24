@@ -19,12 +19,10 @@ const pythonExe =
 
 const e2eDbPath = path.join(os.tmpdir(), 'ai-paralegal-playwright-e2e.db');
 const e2eStorageDir = path.join(os.tmpdir(), 'ai-paralegal-playwright-storage');
-try {
-  fs.rmSync(e2eDbPath, { force: true });
-  fs.rmSync(e2eStorageDir, { recursive: true, force: true });
-} catch {
-  // ignore cleanup if locked
-}
+const cleanupCmd =
+  `node -e "const fs=require('node:fs');` +
+  `for(const s of ['','-wal','-shm','-journal'])fs.rmSync(process.env.E2E_DB_PATH+s,{force:true});` +
+  `fs.rmSync(process.env.LOCAL_STORAGE_DIR,{recursive:true,force:true});"`;
 
 const dbUrl = `sqlite+aiosqlite:///${e2eDbPath.replace(/\\/g, '/')}`;
 
@@ -49,7 +47,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `"${pythonExe}" -m alembic upgrade head && "${pythonExe}" -m uvicorn app.main:app --host 127.0.0.1 --port 8011`,
+      command: `${cleanupCmd} && "${pythonExe}" -m alembic upgrade head && "${pythonExe}" -m uvicorn app.main:app --host 127.0.0.1 --port 8011`,
       cwd: backendDir,
       url: 'http://127.0.0.1:8011/api/v1/health',
       reuseExistingServer: false,
@@ -57,6 +55,7 @@ export default defineConfig({
       env: {
         ...process.env,
         APP_ENV: 'test',
+        E2E_DB_PATH: e2eDbPath,
         DATABASE_URL: dbUrl,
         STORAGE_BACKEND: 'local',
         LOCAL_STORAGE_DIR: e2eStorageDir,
