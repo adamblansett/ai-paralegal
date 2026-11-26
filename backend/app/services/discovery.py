@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,12 +13,15 @@ from app.llm.prompts import (
     PROMPT_VERSION,
     build_discovery_synthesis_prompt,
     build_research_qa_prompt,
+    build_research_qa_stream_prompt,
 )
 from app.llm.router import ModelRouter
 from app.llm.types import (
     DiscoverySynthesisLLMOutput,
     LLMRequest,
+    RawCitation,
     ResearchAnswerLLMOutput,
+    SourceChunkContext,
     VerifiedCitation,
 )
 from app.models.finding import ExtractedFinding
@@ -480,3 +484,246 @@ async def run_research_query(
         "model_name": llm_response.model_name,
         "disclaimer": LEGAL_DISCLAIMER,
     }
+
+
+def _extract_stream_citations(
+    full_answer: str,
+    source_contexts: list[SourceChunkContext],
+) -> list[RawCitation]:
+    """Extract verbatim source citations matched against retrieved matter chunks."""
+    citations: list[RawCitation] = []
+    seen_chunks: set[str] = set()
+    for ctx in source_contexts:
+        if ctx.chunk_ref in full_answer or ctx.document_filename in full_answer:
+            quote = ctx.content.strip().splitlines()[0][:240]
+            citations.append(RawCitation(chunk_id=ctx.chunk_id, quote=quote))
+            seen_chunks.add(ctx.chunk_id)
+
+    if not citations:
+        for ctx in source_contexts[:3]:
+            if ctx.chunk_id in seen_chunks:
+                continue
+            quote = ctx.content.strip().splitlines()[0][:240]
+            citations.append(RawCitation(chunk_id=ctx.chunk_id, quote=quote))
+    return citations
+
+
+async def stream_research_query(
+    session: AsyncSession,
+    router: ModelRouter,
+    embedding_service: EmbeddingService,
+    *,
+    matter_id: uuid.UUID,
+    question: str,
+    document_ids: list[uuid.UUID] | None = None,
+    top_k: int = 8,
+    provider: str | None = None,
+    model: str | None = None,
+    save_to_queue: bool = False,
+    settings: Settings | None = None,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    """Stream SSE research tokens incrementally, then persist citations and audit trail."""
+    cfg = settings or get_settings()
+    retrieved = await hybrid_search(
+        session,
+        embedding_service,
+        matter_id=matter_id,
+        query=question,
+        document_ids=document_ids,
+        top_k=top_k,
+    )
+    source_contexts = chunks_to_source_contexts(retrieved)
+    chunk_map = {c.chunk_id: c for c in source_contexts}
+
+    yield (
+        "retrieval",
+        {
+            "question": question,
+            "hit_count": len(source_contexts),
+            "sources": [
+                {
+                    "chunk_ref": c.chunk_ref,
+                    "document_id": c.document_id,
+                    "document_filename": c.document_filename,
+                    "page_number": c.page_number,
+                }
+                for c in source_contexts[:5]
+            ],
+        },
+    )
+
+    template_name, system_prompt, user_prompt = build_research_qa_stream_prompt(
+        question, source_contexts
+    )
+    llm_request = LLMRequest(
+        task_kind="qa_research",
+        prompt_template=template_name,
+        prompt_version=PROMPT_VERSION,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        context_chunks=source_contexts,
+        metadata={"question": question},
+    )
+
+    deltas: list[str] = []
+    resolved_provider = provider or cfg.llm_default_provider
+    resolved_model = model or "default"
+    redactions: dict[str, int] = {}
+
+    async for delta, prov_name, mod_name, red_summary in router.stream_text(
+        llm_request,
+        provider=provider,
+        model=model,
+    ):
+        deltas.append(delta)
+        resolved_provider = prov_name
+        resolved_model = mod_name
+        redactions = red_summary
+        yield (
+            "token",
+            {
+                "delta": delta,
+                "provider": resolved_provider,
+                "model_name": resolved_model,
+            },
+        )
+
+    full_answer = "".join(deltas).strip()
+    raw_citations = _extract_stream_citations(full_answer, source_contexts)
+    verified = verify_citations(raw_citations, chunk_map)
+    g_score = compute_grounding_score(verified)
+    unverified_cnt = sum(1 for v in verified if v.verification_status == "unverified")
+    confidence = 0.85 if source_contexts and len(verified) > 0 else 0.45
+    escalate, esc_reason = evaluate_escalation(
+        confidence=confidence,
+        grounding_score=g_score,
+        severity="medium",
+        unverified_count=unverified_cnt,
+        settings=cfg,
+    )
+
+    key_points = [
+        f"[{v.chunk_ref or v.chunk_id}] {v.document_filename or 'Source'}: \"{v.quote[:160]}\""
+        for v in verified
+    ]
+    uncertainties = (
+        ["No indexed chunks matched the query."] if not source_contexts else []
+    )
+    missing_context = (
+        ["Additional corroborating matter records were not checked."]
+        if len({c.document_id for c in source_contexts}) <= 1
+        else []
+    )
+
+    finding_id: uuid.UUID | None = None
+    task = ReviewTask(
+        matter_id=matter_id,
+        task_type="qa_research",
+        status="completed",
+        requested_provider=provider,
+        requested_model=model,
+        resolved_provider=resolved_provider,
+        resolved_model=resolved_model,
+        input_params_json={"question": question, "top_k": top_k, "stream": True},
+        result_json={
+            "answer": full_answer,
+            "grounding_score": g_score,
+            "requires_escalation": escalate,
+            "disclaimer": LEGAL_DISCLAIMER,
+        },
+        started_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+    )
+    session.add(task)
+    await session.flush()
+
+    if save_to_queue:
+        primary_doc_id: uuid.UUID | None = None
+        for cit in verified:
+            if cit.document_id:
+                primary_doc_id = uuid.UUID(cit.document_id)
+                break
+        finding = ExtractedFinding(
+            matter_id=matter_id,
+            document_id=primary_doc_id,
+            review_task_id=task.id,
+            finding_type="research_answer",
+            category="legal_research",
+            title=question[:255],
+            summary=full_answer,
+            severity="medium" if escalate else "info",
+            confidence=confidence,
+            grounding_score=g_score,
+            requires_escalation=escalate,
+            escalation_reason=esc_reason,
+            citations_json=[v.model_dump() for v in verified],
+            metadata_json={
+                "key_points": key_points,
+                "uncertainties": uncertainties,
+                "missing_context": missing_context,
+                "streamed": True,
+                "disclaimer": LEGAL_DISCLAIMER,
+            },
+            review_status="pending_review",
+        )
+        session.add(finding)
+        await session.flush()
+        finding_id = finding.id
+
+    await record_audit_log(
+        session,
+        matter_id=matter_id,
+        review_task_id=task.id,
+        finding_id=finding_id,
+        action="llm_invocation_stream",
+        actor_type="llm",
+        actor_id=f"{resolved_provider}:{resolved_model}",
+        provider=resolved_provider,
+        model_name=resolved_model,
+        prompt_template=template_name,
+        prompt_version=PROMPT_VERSION,
+        prompt_text=user_prompt[:8000],
+        retrieved_spans=[
+            {
+                "chunk_id": c.chunk_id,
+                "chunk_ref": c.chunk_ref,
+                "document_id": c.document_id,
+                "document_filename": c.document_filename,
+                "page_number": c.page_number,
+                "paragraph_index": c.paragraph_index,
+                "section_heading": c.section_heading,
+            }
+            for c in source_contexts
+        ],
+        response_metadata={
+            "question": question,
+            "streamed": True,
+            "redactions": redactions,
+        },
+        grounding_score=g_score,
+        escalated=escalate,
+        new_state="completed",
+        notes=f"Streamed research query answered with {len(verified)} citation(s).",
+    )
+    await session.commit()
+
+    yield (
+        "complete",
+        {
+            "task_id": str(task.id),
+            "finding_id": str(finding_id) if finding_id else None,
+            "question": question,
+            "answer": full_answer,
+            "key_points": key_points,
+            "uncertainties": uncertainties,
+            "missing_context": missing_context,
+            "confidence": confidence,
+            "grounding_score": g_score,
+            "requires_escalation": escalate,
+            "escalation_reason": esc_reason,
+            "citations": [v.model_dump(mode="json") for v in verified],
+            "provider": resolved_provider,
+            "model_name": resolved_model,
+            "disclaimer": LEGAL_DISCLAIMER,
+        },
+    )

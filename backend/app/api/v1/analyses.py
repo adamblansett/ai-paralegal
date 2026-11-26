@@ -1,6 +1,9 @@
+import json
 import uuid
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +35,7 @@ from app.schemas.analysis import (
     SearchResponse,
 )
 from app.services.contract_review import build_portfolio_risk_matrix
-from app.services.discovery import run_research_query
+from app.services.discovery import run_research_query, stream_research_query
 from app.services.retrieval import hybrid_search
 from app.workers.dispatch import (
     dispatch_batch_contract_review,
@@ -278,6 +281,49 @@ async def research_query(
         settings=settings,
     )
     return ResearchQueryResponse(**result)
+
+
+@router.post(
+    "/matters/{matter_id}/research/query/stream",
+    dependencies=[Depends(rate_limit_llm)],
+)
+async def research_query_stream(
+    matter_id: uuid.UUID,
+    payload: ResearchQueryRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+    model_router: ModelRouter = Depends(get_router),
+    embeddings: EmbeddingService = Depends(get_embeddings),
+) -> StreamingResponse:
+    """Stream SSE research tokens live, followed by verified citations and audit log commit."""
+    await require_matter_access(session, matter_id=matter_id, user=current_user, write=True)
+
+    async def _sse_events() -> AsyncIterator[str]:
+        async for event_name, event_data in stream_research_query(
+            session,
+            model_router,
+            embeddings,
+            matter_id=matter_id,
+            question=payload.question,
+            document_ids=payload.document_ids,
+            top_k=payload.top_k,
+            provider=payload.provider,
+            model=payload.model,
+            save_to_queue=payload.save_to_queue,
+            settings=settings,
+        ):
+            yield f"event: {event_name}\ndata: {json.dumps(event_data)}\n\n"
+
+    return StreamingResponse(
+        _sse_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(

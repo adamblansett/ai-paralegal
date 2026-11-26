@@ -1,0 +1,10 @@
+aws_region              = "us-east-1"
+environment             = "production"
+name_prefix             = "ai-paralegal"
+vpc_id                  = "vpc-0123456789abcdef0"
+private_subnet_ids      = ["subnet-01111111111111111", "subnet-02222222222222222"]
+eks_cluster_cidr_blocks = ["10.20.0.0/16"]
+db_instance_class       = "db.t4g.medium"
+redis_node_type         = "cache.t4g.small"
+deploy_helm_release     = false
+ingress_host            = "paralegal.example.com"

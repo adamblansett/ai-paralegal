@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   AlertCircle,
   CalendarClock,
+  CheckCircle2,
   Copy,
   Download,
   FileEdit,
@@ -15,6 +16,7 @@ import type {
   ExtractedFinding,
   HealthResponse,
   LLMProviderName,
+  MatterObligation,
   ResearchQueryResponse,
   ReviewTaskItem,
   SearchHit,
@@ -31,7 +33,7 @@ interface DiscoveryDraftingTabProps {
   onRefresh: () => Promise<void>;
 }
 
-type SubView = 'qa' | 'synthesis' | 'drafting';
+type SubView = 'qa' | 'synthesis' | 'drafting' | 'obligations';
 
 export function DiscoveryDraftingTab({
   matterId,
@@ -48,9 +50,16 @@ export function DiscoveryDraftingTab({
   // Q&A + Search state
   const [question, setQuestion] = useState('');
   const [saveToQueue, setSaveToQueue] = useState(true);
+  const [streamLive, setStreamLive] = useState(true);
   const [asking, setAsking] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
   const [qaResult, setQaResult] = useState<ResearchQueryResponse | null>(null);
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
+
+  // Obligations & Deadlines state
+  const [obligations, setObligations] = useState<MatterObligation[]>([]);
+  const [loadingObligations, setLoadingObligations] = useState(false);
+  const [extractingObligations, setExtractingObligations] = useState(false);
 
   // Synthesis state
   const [synthesizing, setSynthesizing] = useState(false);
@@ -76,19 +85,73 @@ export function DiscoveryDraftingTab({
   const latestDraftTask =
     draftTask ?? tasks.find((t) => t.task_type === 'draft_generation' && t.status === 'completed') ?? null;
 
+  useEffect(() => {
+    if (subView !== 'obligations') return;
+    setLoadingObligations(true);
+    void api
+      .listObligations(matterId)
+      .then((rows) => setObligations(rows))
+      .catch((err) => setError(err instanceof Error ? err.message : 'Unable to load obligations.'))
+      .finally(() => setLoadingObligations(false));
+  }, [subView, matterId]);
+
+  async function handleExtractObligations() {
+    setError(null);
+    setExtractingObligations(true);
+    try {
+      await api.extractObligations(matterId);
+      const allRows = await api.listObligations(matterId);
+      setObligations(allRows);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Obligation extraction failed.');
+    } finally {
+      setExtractingObligations(false);
+    }
+  }
+
+  async function handleCompleteObligation(ob: MatterObligation) {
+    setError(null);
+    try {
+      const updated = await api.updateObligation(ob.id, {
+        status: ob.status === 'completed' ? 'open' : 'completed',
+      });
+      setObligations((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update obligation.');
+    }
+  }
+
   async function handleAsk(e: FormEvent) {
     e.preventDefault();
     if (!question.trim()) return;
     setError(null);
     setAsking(true);
     setSearchHits(null);
+    setStreamingText('');
+    if (streamLive) {
+      setQaResult(null);
+    }
     try {
-      const res = await api.researchQuery(matterId, {
-        question,
-        provider: provider || undefined,
-        save_to_queue: saveToQueue,
-      });
+      const res = streamLive
+        ? await api.researchQueryStream(
+            matterId,
+            {
+              question,
+              provider: provider || undefined,
+              save_to_queue: saveToQueue,
+            },
+            {
+              onToken: (delta) => setStreamingText((prev) => prev + delta),
+            }
+          )
+        : await api.researchQuery(matterId, {
+            question,
+            provider: provider || undefined,
+            save_to_queue: saveToQueue,
+          });
       setQaResult(res);
+      setStreamingText('');
       await onRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Research query failed.');
@@ -212,6 +275,18 @@ export function DiscoveryDraftingTab({
             <FileEdit className="h-3.5 w-3.5" />
             Citation-Grounded Drafting
           </button>
+          <button
+            type="button"
+            onClick={() => setSubView('obligations')}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              subView === 'obligations'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <CalendarClock className="h-3.5 w-3.5" />
+            Obligations &amp; Deadlines
+          </button>
         </div>
 
         <select
@@ -245,15 +320,26 @@ export function DiscoveryDraftingTab({
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
             />
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <label className="inline-flex items-center gap-2 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={saveToQueue}
-                  onChange={(e) => setSaveToQueue(e.target.checked)}
-                  className="rounded border-slate-300 text-indigo-600"
-                />
-                Save research answer to Attorney Review Queue
-              </label>
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={saveToQueue}
+                    onChange={(e) => setSaveToQueue(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600"
+                  />
+                  Save research answer to Attorney Review Queue
+                </label>
+                <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={streamLive}
+                    onChange={(e) => setStreamLive(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600"
+                  />
+                  Stream live (SSE)
+                </label>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -279,6 +365,19 @@ export function DiscoveryDraftingTab({
               </div>
             </div>
           </form>
+
+          {asking && streamingText && (
+            <div
+              data-testid="qa-streaming-preview"
+              className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-5 text-sm leading-relaxed text-slate-800 shadow-sm"
+            >
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-indigo-700">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Streaming response...
+              </div>
+              <div className="whitespace-pre-wrap">{streamingText}</div>
+            </div>
+          )}
 
           {qaResult && (
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
@@ -656,6 +755,97 @@ export function DiscoveryDraftingTab({
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* OBLIGATIONS & DEADLINES */}
+      {subView === 'obligations' && (
+        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">
+                Contractual Obligations &amp; Notice Deadlines
+              </h3>
+              <p className="text-xs text-slate-500">
+                Auto-extract renewal notice windows, cure periods, and explicit dates with iCalendar
+                (`.ics`) export.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={extractingObligations}
+                onClick={() => void handleExtractObligations()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {extractingObligations ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3.5 w-3.5" />
+                )}
+                {extractingObligations ? 'Extracting...' : 'Extract Deadlines'}
+              </button>
+              <a
+                href={api.obligationsCalendarUrl(matterId)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download Calendar (.ics)
+              </a>
+            </div>
+          </div>
+
+          {loadingObligations ? (
+            <div className="flex items-center gap-2 py-6 text-xs text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+              Loading obligations...
+            </div>
+          ) : obligations.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">
+              No obligations tracked yet. Click Extract Deadlines to scan indexed matter documents.
+            </p>
+          ) : (
+            <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+              {obligations.map((ob) => (
+                <div
+                  key={ob.id}
+                  className="flex flex-wrap items-center justify-between gap-2 p-3 text-xs"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-900">{ob.title}</span>
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-700">
+                        {ob.category}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          ob.status === 'completed'
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : ob.status === 'overdue'
+                              ? 'bg-rose-50 text-rose-700'
+                              : 'bg-amber-50 text-amber-800'
+                        }`}
+                      >
+                        {ob.status}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-slate-500">
+                      Due: {new Date(ob.due_date).toLocaleDateString()}
+                      {ob.notice_window_days ? ` • Notice window: ${ob.notice_window_days} days` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleCompleteObligation(ob)}
+                    className="inline-flex items-center gap-1 rounded border border-slate-300 px-2.5 py-1 font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    {ob.status === 'completed' ? 'Reopen' : 'Mark Completed'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

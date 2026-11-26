@@ -105,6 +105,23 @@ def build_research_qa_prompt(
     return "research_qa_v1", system_prompt, user_prompt
 
 
+def build_research_qa_stream_prompt(
+    question: str,
+    chunks: list[SourceChunkContext],
+) -> tuple[str, str, str]:
+    """Return `(template_name, system_prompt, user_prompt)` for progressive SSE research Q&A."""
+    system_prompt = (
+        "You are an AI Paralegal Research Assistant. Answer the user's question concisely and "
+        "STRICTLY from the supplied matter chunks. Cite source bracket references (e.g., [S1]) "
+        "and quote key phrases verbatim. Explicitly note any missing context or uncertainties."
+    )
+    user_prompt = (
+        f"Question: {question.strip()}\n\n"
+        f"Retrieved Source Chunks:\n{format_chunks_for_prompt(chunks)}"
+    )
+    return "research_qa_stream_v1", system_prompt, user_prompt
+
+
 def build_drafting_prompt(
     draft_type: str,
     instructions: str,

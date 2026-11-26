@@ -22,6 +22,7 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: str = Field(..., min_length=4, max_length=255)
     password: str = Field(..., min_length=1, max_length=128)
+    totp_code: str | None = Field(default=None, min_length=6, max_length=12)
 
 
 class UserRead(BaseModel):
@@ -33,7 +34,17 @@ class UserRead(BaseModel):
     full_name: str
     role: str
     is_active: bool
+    mfa_enabled: bool = False
     created_at: datetime
+
+
+class MFAEnrollResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+
+
+class MFAVerifyRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=12)
 
 
 class TokenResponse(BaseModel):

@@ -18,7 +18,13 @@ export interface UserProfile {
   full_name: string;
   role: UserRole;
   is_active: boolean;
+  mfa_enabled?: boolean;
   created_at: string;
+}
+
+export interface MFAEnrollResponse {
+  secret: string;
+  otpauth_uri: string;
 }
 
 export interface TokenResponse {
@@ -445,4 +451,107 @@ export interface RetentionSweepReport {
   eligible_count: number;
   skipped_legal_hold_count: number;
   items: RetentionSweepItem[];
+}
+
+export interface ClauseDiffHunk {
+  section_heading: string;
+  change_type: 'added' | 'removed' | 'modified' | 'unchanged';
+  base_text: string | null;
+  revised_text: string | null;
+  unified_diff: string;
+  risk_impact: string | null;
+}
+
+export interface RiskRegressionFlag {
+  severity: 'high' | 'medium' | 'low';
+  category: string;
+  title: string;
+  detail: string;
+  base_excerpt: string | null;
+  revised_excerpt: string | null;
+}
+
+export interface DocumentComparisonResponse {
+  matter_id: string;
+  base_document_id: string;
+  base_filename: string;
+  revised_document_id: string;
+  revised_filename: string;
+  total_hunks: number;
+  added_count: number;
+  removed_count: number;
+  modified_count: number;
+  unchanged_count: number;
+  hunks: ClauseDiffHunk[];
+  risk_regressions: RiskRegressionFlag[];
+  summary_markdown: string;
+}
+
+export interface ConflictMatch {
+  matter_id: string;
+  matter_number: string;
+  matter_title: string;
+  client_name: string;
+  matched_party: string;
+  match_source: 'client_name' | 'matter_title' | 'discovered_entity' | 'document_text';
+  confidence: number;
+  severity: 'high' | 'medium' | 'low';
+  snippet: string | null;
+}
+
+export interface ConflictCheckResponse {
+  query_client: string;
+  query_counterparties: string[];
+  has_conflicts: boolean;
+  risk_level: 'none' | 'low' | 'medium' | 'high';
+  recommended_action: string;
+  matches: ConflictMatch[];
+}
+
+export interface EthicalWallEntry {
+  id: string;
+  organization_id: string | null;
+  matter_id: string;
+  user_id: string;
+  user_email: string | null;
+  user_full_name: string | null;
+  reason: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export type ObligationCategory =
+  | 'renewal_notice'
+  | 'payment'
+  | 'cure_period'
+  | 'filing_deadline'
+  | 'compliance'
+  | 'termination_window'
+  | 'other';
+
+export type ObligationStatus = 'open' | 'completed' | 'waived' | 'overdue';
+
+export interface MatterObligation {
+  id: string;
+  matter_id: string;
+  document_id: string | null;
+  title: string;
+  category: ObligationCategory | string;
+  due_date: string;
+  notice_window_days: number | null;
+  owner_name: string | null;
+  status: ObligationStatus | string;
+  source_quote: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ObligationAlertResult {
+  matter_id: string;
+  due_within_days: number;
+  alerted_count: number;
+  overdue_count: number;
+  webhooks_dispatched: number;
+  obligations: MatterObligation[];
 }

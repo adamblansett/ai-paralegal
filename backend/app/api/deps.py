@@ -15,6 +15,7 @@ from app.llm.embeddings import EmbeddingService
 from app.llm.router import ModelRouter
 from app.models.document import Document
 from app.models.finding import ExtractedFinding
+from app.models.legal_ops import EthicalWall
 from app.models.matter import Matter
 from app.models.user import MatterMembership, RevokedToken, User
 from app.storage import StorageBackend, get_storage_backend
@@ -131,6 +132,18 @@ async def require_matter_access(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: matter belongs to another organization tenant.",
+        )
+
+    # Ethical wall conflict screen blocks access even for partners and auditors
+    wall_stmt = select(EthicalWall).where(
+        EthicalWall.matter_id == matter_id,
+        EthicalWall.user_id == user.id,
+        EthicalWall.is_active.is_(True),
+    )
+    if (await session.execute(wall_stmt)).scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: ethical wall conflict screen restricts access to this matter.",
         )
 
     if user.role == "auditor":

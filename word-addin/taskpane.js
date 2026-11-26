@@ -1,32 +1,56 @@
 /* Office.js Task Pane Controller for AI Paralegal Word Add-in */
 
+function setStatusParagraph(container, text, color) {
+  container.textContent = "";
+  const p = document.createElement("p");
+  p.style.fontSize = "12px";
+  p.style.color = color;
+  p.textContent = text;
+  container.appendChild(p);
+}
+
 async function fetchRedlinePayload() {
   const apiBase = document.getElementById("apiBase").value.replace(/\/$/, "");
   const matterId = document.getElementById("matterId").value.trim();
   const jwt = document.getElementById("jwt").value.trim();
   const container = document.getElementById("list");
-  container.innerHTML = "<p style='font-size:12px;color:#475569;'>Loading redlines...</p>";
+  setStatusParagraph(container, "Loading redlines...", "#475569");
 
-  const resp = await fetch(`${apiBase}/matters/${matterId}/redlines/word-payload`, {
+  const resp = await fetch(`${apiBase}/matters/${encodeURIComponent(matterId)}/redlines/word-payload`, {
     headers: { Authorization: `Bearer ${jwt}` },
   });
   if (!resp.ok) {
-    container.innerHTML = `<p style='font-size:12px;color:#b91c1c;'>Error HTTP ${resp.status}</p>`;
+    setStatusParagraph(container, `Error HTTP ${resp.status}`, "#b91c1c");
     return;
   }
   const data = await resp.json();
-  container.innerHTML = "";
-  for (const item of data.items) {
+  container.textContent = "";
+
+  for (const item of data.items || []) {
     const card = document.createElement("div");
     card.className = "card";
-    card.innerHTML = `
-      <div style="font-size:12px;font-weight:700;">[${item.severity.toUpperCase()}] ${item.title}</div>
-      <div class="quote">${item.original_quote}</div>
-      <div class="redline">${item.proposed_redline}</div>
-    `;
+
+    const titleEl = document.createElement("div");
+    titleEl.style.fontSize = "12px";
+    titleEl.style.fontWeight = "700";
+    titleEl.textContent = `[${String(item.severity || "info").toUpperCase()}] ${String(item.title || "")}`;
+
+    const quoteEl = document.createElement("div");
+    quoteEl.className = "quote";
+    quoteEl.textContent = String(item.original_quote || "");
+
+    const redlineEl = document.createElement("div");
+    redlineEl.className = "redline";
+    redlineEl.textContent = String(item.proposed_redline || "");
+
     const btn = document.createElement("button");
+    btn.type = "button";
     btn.textContent = "Insert Fallback Clause + Comment";
-    btn.onclick = () => insertIntoWord(item);
+    btn.addEventListener("click", () => void insertIntoWord(item));
+
+    card.appendChild(titleEl);
+    card.appendChild(quoteEl);
+    card.appendChild(redlineEl);
     card.appendChild(btn);
     container.appendChild(card);
   }
@@ -34,22 +58,24 @@ async function fetchRedlinePayload() {
 
 async function insertIntoWord(item) {
   if (typeof Word === "undefined") {
-    alert(`Preview fallback clause:\n\n${item.proposed_redline}`);
+    alert(`Preview fallback clause:\n\n${String(item.proposed_redline || "")}`);
     return;
   }
   await Word.run(async (context) => {
-    const searchText = item.original_quote.slice(0, 120);
+    const searchText = String(item.original_quote || "").slice(0, 120);
     const results = context.document.body.search(searchText, { matchCase: false });
     results.load("items");
     await context.sync();
 
     if (results.items.length > 0) {
       const target = results.items[0];
-      target.insertText(item.proposed_redline, Word.InsertLocation.replace);
-      target.insertComment(`AI Paralegal [${item.category}]: ${item.rationale || item.title}`);
+      target.insertText(String(item.proposed_redline || ""), Word.InsertLocation.replace);
+      target.insertComment(
+        `AI Paralegal [${String(item.category || "clause")}]: ${String(item.rationale || item.title || "")}`
+      );
     } else {
       const p = context.document.body.insertParagraph(
-        `[PROPOSED ${item.category.toUpperCase()}]: ${item.proposed_redline}`,
+        `[PROPOSED ${String(item.category || "CLAUSE").toUpperCase()}]: ${String(item.proposed_redline || "")}`,
         Word.InsertLocation.end
       );
       p.font.color = "#15803d";

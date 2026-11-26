@@ -67,3 +67,64 @@ test('complete legal-ops workflow: sign in, create matter, upload, Bates stamp, 
   expect(docxResp.status()).toBe(200);
   expect((await docxResp.body()).slice(0, 2).toString()).toBe('PK');
 });
+
+test('enterprise workflows: conflict check, DMS import, legal hold, audit chain, admin modal, streaming Q&A, obligations & .ics export', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByText('AI Paralegal Workspace')).toBeVisible();
+  await page.getByRole('button', { name: /Partner/i }).click();
+
+  // 1. Open New Matter modal via sidebar button and run intake conflict check
+  await page.getByRole('button', { name: /^New$/i }).click();
+  await page.getByPlaceholder(/Meridian v\. Apex Cloud/i).fill('Enterprise Governance E2E');
+  await page.getByPlaceholder(/Meridian Legal Group LLP/i).fill('Buyer Corp');
+  await page.getByPlaceholder(/Apex Cloud Systems/i).fill('Acme');
+  await page.getByTestId('conflict-check-btn').click();
+  await expect(page.getByText(/Conflict Screen:/i)).toBeVisible();
+
+  await page.getByRole('button', { name: /Create Matter/i }).click();
+  await expect(page.getByRole('heading', { name: 'Enterprise Governance E2E' })).toBeVisible();
+
+  // 2. Import sample contract via mock_dms
+  await page.getByRole('button', { name: /Import from DMS/i }).click();
+  await expect(page.getByText(/Enterprise DMS & Legal Vault Connectors/i)).toBeVisible();
+  await page.getByRole('button', { name: /^Import$/i }).first().click();
+  await expect(page.getByText('indexed').first()).toBeVisible();
+
+  // 3. Activate Legal Hold and verify delete lock state
+  await page.getByTestId('legal-hold-btn').click();
+  await expect(page.getByText('Legal Hold Active')).toBeVisible();
+  await expect(
+    page.locator('[title="Deletion locked under active Litigation Legal Hold"]').first()
+  ).toBeDisabled();
+
+  // 4. Verify cryptographic SHA-256 audit chain
+  await page.getByRole('button', { name: /Review Queue & Audit Trail/i }).click();
+  await page.getByRole('button', { name: /Immutable Audit Trail/i }).click();
+  await page.getByRole('button', { name: /Verify SHA-256 Audit Chain/i }).click();
+  await expect(page.getByTestId('audit-chain-status')).toContainText(/Chain Intact/i);
+
+  // 5. Open Admin & Integrations modal and preview retention sweep
+  await page.getByTestId('admin-integrations-btn').click();
+  await page.getByRole('button', { name: /Retention & Compliance/i }).click();
+  await page.getByRole('button', { name: /Preview Expired \(Dry Run\)/i }).click();
+  await expect(page.getByText(/Evaluated:/i)).toBeVisible();
+  await page.getByRole('button', { name: /Close Admin Console/i }).click();
+
+  // 6. Stream Research Q&A and extract obligations + export .ics calendar
+  await page.getByRole('button', { name: /Q&A, Synthesis & Drafting/i }).click();
+  await page.getByPlaceholder(/What annual fee/i).fill('What is the limitation of liability cap?');
+  await page.getByRole('button', { name: /Answer with Citations/i }).click();
+  await expect(page.getByText(/Confidence/i).first()).toBeVisible();
+
+  await page.getByRole('button', { name: /Obligations & Deadlines/i }).click();
+  await page.getByRole('button', { name: /Extract Deadlines/i }).click();
+  await expect(page.getByText(/Download Calendar \(\.ics\)/i)).toBeVisible();
+
+  const icsHref = await page.getByRole('link', { name: /Download Calendar \(\.ics\)/i }).getAttribute('href');
+  expect(icsHref).toBeTruthy();
+  const icsResp = await page.request.get(icsHref!);
+  expect(icsResp.status()).toBe(200);
+  expect(await icsResp.text()).toContain('BEGIN:VCALENDAR');
+});

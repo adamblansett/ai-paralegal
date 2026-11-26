@@ -61,6 +61,11 @@ export function AdminIntegrationsModal({
   const [savingOrg, setSavingOrg] = useState(false);
   const [runningSweep, setRunningSweep] = useState(false);
 
+  // TOTP MFA enrollment state
+  const [mfaSecret, setMfaSecret] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaActive, setMfaActive] = useState(Boolean(currentUser.mfa_enabled));
+
   const isPartner = currentUser.role === 'partner';
   const canManageWebhooks = currentUser.role === 'partner' || currentUser.role === 'associate';
 
@@ -218,6 +223,37 @@ export function AdminIntegrationsModal({
       setStatusMessage(`Updated ${updated.full_name} to role "${updated.role}".`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to update user role.');
+    }
+  }
+
+  async function handleEnrollMfa() {
+    setError(null);
+    setStatusMessage(null);
+    try {
+      const res = await api.enrollMfa();
+      setMfaSecret(res.secret);
+      setStatusMessage('TOTP secret generated. Enter a 6-digit authenticator code to activate.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'MFA enrollment failed.');
+    }
+  }
+
+  async function handleConfirmMfa() {
+    if (!mfaCode.trim()) return;
+    setError(null);
+    setStatusMessage(null);
+    try {
+      const updated = mfaActive
+        ? await api.disableMfa(mfaCode.trim())
+        : await api.verifyMfa(mfaCode.trim());
+      setMfaActive(Boolean(updated.mfa_enabled));
+      setMfaSecret(null);
+      setMfaCode('');
+      setStatusMessage(
+        updated.mfa_enabled ? 'TOTP MFA is now enabled on your account.' : 'TOTP MFA disabled.'
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Invalid TOTP verification code.');
     }
   }
 
@@ -550,6 +586,51 @@ export function AdminIntegrationsModal({
                   </div>
                 </div>
               )}
+
+              <div className="rounded-lg border border-slate-200 p-3.5 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-semibold text-slate-900">
+                      Multi-Factor Authentication (TOTP MFA)
+                    </h4>
+                    <p className="text-slate-500">
+                      Status: <strong>{mfaActive ? 'Enabled' : 'Not Enabled'}</strong>
+                    </p>
+                  </div>
+                  {!mfaActive && !mfaSecret && (
+                    <button
+                      type="button"
+                      onClick={() => void handleEnrollMfa()}
+                      className="rounded-md bg-indigo-600 px-3 py-1 font-semibold text-white hover:bg-indigo-500"
+                    >
+                      Enable TOTP MFA
+                    </button>
+                  )}
+                </div>
+                {mfaSecret && (
+                  <p className="rounded bg-slate-50 px-2.5 py-1.5 font-mono text-[11px] text-slate-800">
+                    Authenticator Secret: {mfaSecret}
+                  </p>
+                )}
+                {(mfaSecret || mfaActive) && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value)}
+                      placeholder="6-digit TOTP code"
+                      className="w-36 rounded border border-slate-300 px-2.5 py-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleConfirmMfa()}
+                      className="rounded border border-slate-300 bg-white px-3 py-1 font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      {mfaActive ? 'Disable MFA' : 'Verify & Activate'}
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <div>
                 <h4 className="mb-2 font-semibold text-slate-900">Tenant Directory & Roles</h4>

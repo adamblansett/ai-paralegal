@@ -3,17 +3,24 @@ import type {
   AuditChainVerification,
   AuditLogEntry,
   BatesStampResponse,
+  ConflictCheckResponse,
   DMSFileItem,
   DMSProviderInfo,
   DocumentChunkItem,
+  DocumentComparisonResponse,
   DocumentItem,
   DocumentUploadResponse,
+  EthicalWallEntry,
   ExtractedFinding,
   HealthResponse,
   LLMProviderName,
   Matter,
   MatterCreateInput,
   MatterMember,
+  MatterObligation,
+  MFAEnrollResponse,
+  ObligationAlertResult,
+  ObligationStatus,
   OrganizationInfo,
   Playbook,
   PlaybookRule,
@@ -152,10 +159,26 @@ export const api = {
       oidc_issuer_url: string | null;
       oidc_client_id: string | null;
     }>('/auth/providers'),
-  login: (email: string, password: string) =>
+  login: (email: string, password: string, totpCode?: string) =>
     apiRequest<TokenResponse>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(
+        totpCode ? { email, password, totp_code: totpCode } : { email, password }
+      ),
+    }),
+  enrollMfa: () =>
+    apiRequest<MFAEnrollResponse>('/auth/mfa/enroll', {
+      method: 'POST',
+    }),
+  verifyMfa: (code: string) =>
+    apiRequest<UserProfile>('/auth/mfa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+  disableMfa: (code: string) =>
+    apiRequest<UserProfile>('/auth/mfa/disable', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
     }),
   register: (payload: {
     email: string;
@@ -439,6 +462,137 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ retention_until }),
     }),
+
+  // Legal-Ops: Version Diff, Conflict Screening, Ethical Walls, Obligations & Streaming
+  compareDocuments: (matterId: string, baseDocumentId: string, revisedDocumentId: string) =>
+    apiRequest<DocumentComparisonResponse>(`/matters/${matterId}/documents/compare`, {
+      method: 'POST',
+      body: JSON.stringify({
+        base_document_id: baseDocumentId,
+        revised_document_id: revisedDocumentId,
+      }),
+    }),
+  runConflictCheck: (payload: {
+    client_name: string;
+    counterparties?: string[];
+    matter_title?: string;
+  }) =>
+    apiRequest<ConflictCheckResponse>('/matters/conflict-check', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  listEthicalWalls: (matterId: string) =>
+    apiRequest<EthicalWallEntry[]>(`/matters/${matterId}/ethical-walls`),
+  createEthicalWall: (matterId: string, payload: { user_id: string; reason: string }) =>
+    apiRequest<EthicalWallEntry>(`/matters/${matterId}/ethical-walls`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteEthicalWall: (matterId: string, userId: string) =>
+    apiRequest<void>(`/matters/${matterId}/ethical-walls/${userId}`, {
+      method: 'DELETE',
+    }),
+  listObligations: (matterId: string) =>
+    apiRequest<MatterObligation[]>(`/matters/${matterId}/obligations`),
+  createObligation: (
+    matterId: string,
+    payload: {
+      title: string;
+      category?: string;
+      due_date: string;
+      notice_window_days?: number;
+      owner_name?: string;
+      notes?: string;
+    }
+  ) =>
+    apiRequest<MatterObligation>(`/matters/${matterId}/obligations`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  extractObligations: (matterId: string) =>
+    apiRequest<MatterObligation[]>(`/matters/${matterId}/obligations/extract`, {
+      method: 'POST',
+    }),
+  updateObligation: (
+    obligationId: string,
+    payload: { status?: ObligationStatus; notes?: string }
+  ) =>
+    apiRequest<MatterObligation>(`/obligations/${obligationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteObligation: (obligationId: string) =>
+    apiRequest<void>(`/obligations/${obligationId}`, { method: 'DELETE' }),
+  obligationsCalendarUrl: (matterId: string) =>
+    `${API_BASE}/matters/${matterId}/obligations/calendar.ics${authQuerySuffix('?')}`,
+  checkObligationAlerts: (matterId: string, dueWithinDays = 14) =>
+    apiRequest<ObligationAlertResult>(
+      `/matters/${matterId}/obligations/check-alerts?due_within_days=${dueWithinDays}`,
+      { method: 'POST' }
+    ),
+  researchQueryStream: async (
+    matterId: string,
+    payload: {
+      question: string;
+      top_k?: number;
+      provider?: LLMProviderName;
+      model?: string;
+      save_to_queue?: boolean;
+    },
+    callbacks: {
+      onToken?: (delta: string) => void;
+      onRetrieval?: (info: { hit_count: number }) => void;
+    } = {}
+  ): Promise<ResearchQueryResponse> => {
+    const token = tokenStore.get();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const resp = await fetch(`${API_BASE}/matters/${matterId}/research/query/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok || !resp.body) {
+      throw new Error(`Streaming research error (${resp.status})`);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult: ResearchQueryResponse | null = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split(/\r?\n\r?\n/);
+      buffer = frames.pop() ?? '';
+      for (const frame of frames) {
+        let eventName = 'message';
+        let dataLine = '';
+        for (const rawLine of frame.split(/\r?\n/)) {
+          if (rawLine.startsWith('event:')) {
+            eventName = rawLine.slice(6).trim();
+          } else if (rawLine.startsWith('data:')) {
+            dataLine += rawLine.slice(5).trim();
+          }
+        }
+        if (!dataLine) continue;
+        const parsed = JSON.parse(dataLine) as Record<string, unknown>;
+        if (eventName === 'retrieval' && callbacks.onRetrieval) {
+          callbacks.onRetrieval(parsed as { hit_count: number });
+        } else if (eventName === 'token' && callbacks.onToken) {
+          callbacks.onToken(String(parsed.delta ?? ''));
+        } else if (eventName === 'complete') {
+          finalResult = parsed as unknown as ResearchQueryResponse;
+        }
+      }
+    }
+    if (!finalResult) {
+      throw new Error('Streaming research ended without completion payload.');
+    }
+    return finalResult;
+  },
 
   matterEventsUrl: (matterId: string) =>
     `${API_BASE}/matters/${matterId}/events${authQuerySuffix('?')}`,

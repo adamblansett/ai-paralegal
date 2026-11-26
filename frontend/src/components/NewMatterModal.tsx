@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { X } from 'lucide-react';
-import type { MatterCreateInput } from '../types/api';
+import { ShieldAlert, ShieldCheck, X } from 'lucide-react';
+import { api } from '../api/client';
+import type { ConflictCheckResponse, MatterCreateInput } from '../types/api';
 
 interface NewMatterModalProps {
   open: boolean;
@@ -11,13 +12,41 @@ interface NewMatterModalProps {
 export function NewMatterModal({ open, onClose, onCreate }: NewMatterModalProps) {
   const [title, setTitle] = useState('');
   const [clientName, setClientName] = useState('');
+  const [counterpartiesInput, setCounterpartiesInput] = useState('');
   const [practiceArea, setPracticeArea] = useState('Commercial Contracts');
   const [jurisdiction, setJurisdiction] = useState('Delaware');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [checkingConflicts, setCheckingConflicts] = useState(false);
+  const [conflictResult, setConflictResult] = useState<ConflictCheckResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
+
+  async function handleConflictCheck() {
+    if (!clientName.trim()) {
+      setError('Enter Client Name first to run conflict screening.');
+      return;
+    }
+    setError(null);
+    setCheckingConflicts(true);
+    try {
+      const counterparties = counterpartiesInput
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+      const res = await api.runConflictCheck({
+        client_name: clientName.trim(),
+        counterparties,
+        matter_title: title.trim() || undefined,
+      });
+      setConflictResult(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Conflict check failed.');
+    } finally {
+      setCheckingConflicts(false);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -33,7 +62,9 @@ export function NewMatterModal({ open, onClose, onCreate }: NewMatterModalProps)
       });
       setTitle('');
       setClientName('');
+      setCounterpartiesInput('');
       setDescription('');
+      setConflictResult(null);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create matter.');
@@ -103,6 +134,50 @@ export function NewMatterModal({ open, onClose, onCreate }: NewMatterModalProps)
               </select>
             </div>
           </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700">
+              Counterparties / Adverse Parties (comma-separated, optional)
+            </label>
+            <div className="mt-1 flex gap-2">
+              <input
+                value={counterpartiesInput}
+                onChange={(e) => setCounterpartiesInput(e.target.value)}
+                placeholder="e.g., Apex Cloud Systems, Beta Holdings LLC"
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                type="button"
+                data-testid="conflict-check-btn"
+                disabled={checkingConflicts}
+                onClick={() => void handleConflictCheck()}
+                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+              >
+                {checkingConflicts ? 'Screening...' : 'Run Conflict Check'}
+              </button>
+            </div>
+          </div>
+
+          {conflictResult && (
+            <div
+              className={`rounded-lg border px-3 py-2.5 text-xs ${
+                conflictResult.has_conflicts
+                  ? 'border-amber-300 bg-amber-50 text-amber-950'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 font-semibold">
+                {conflictResult.has_conflicts ? (
+                  <ShieldAlert className="h-4 w-4 text-amber-700" />
+                ) : (
+                  <ShieldCheck className="h-4 w-4 text-emerald-700" />
+                )}
+                Conflict Screen: {conflictResult.risk_level.toUpperCase()} ({conflictResult.matches.length}{' '}
+                match{conflictResult.matches.length === 1 ? '' : 'es'})
+              </div>
+              <p className="mt-1">{conflictResult.recommended_action}</p>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-slate-700">Governing Jurisdiction</label>

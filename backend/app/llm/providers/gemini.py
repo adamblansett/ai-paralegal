@@ -1,3 +1,5 @@
+import json
+from collections.abc import AsyncIterator
 from typing import TypeVar
 
 import httpx
@@ -79,3 +81,53 @@ class GeminiProvider(LLMProvider):
             total_tokens=total_tokens,
         )
         return parsed, resolved, raw_text, usage
+
+    async def stream_text(
+        self,
+        request: LLMRequest,
+        *,
+        model: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream incremental text chunks via Gemini `:streamGenerateContent?alt=sse`."""
+        if not self.settings.gemini_api_key:
+            raise ProviderError("GEMINI_API_KEY is not configured.")
+
+        resolved = model or self.settings.gemini_default_model
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{resolved}:streamGenerateContent?alt=sse&key={self.settings.gemini_api_key}"
+        )
+        payload = {
+            "systemInstruction": {"parts": [{"text": request.system_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": request.user_prompt}]}],
+            "generationConfig": {
+                "temperature": request.temperature,
+                "maxOutputTokens": request.max_tokens,
+            },
+        }
+        try:
+            async with (
+                httpx.AsyncClient(
+                    timeout=self.settings.llm_request_timeout_seconds
+                ) as client,
+                client.stream("POST", url, json=payload) as resp,
+            ):
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    stripped = line.strip()
+                    if not stripped.startswith("data:"):
+                        continue
+                    raw_json = stripped[5:].strip()
+                    if not raw_json or raw_json == "[DONE]":
+                        continue
+                    chunk = json.loads(raw_json)
+                    candidates = chunk.get("candidates") or []
+                    if not candidates:
+                        continue
+                    parts = candidates[0].get("content", {}).get("parts") or []
+                    for part in parts:
+                        delta = str(part.get("text") or "")
+                        if delta:
+                            yield delta
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Gemini streaming HTTP error ({resolved}): {exc}") from exc

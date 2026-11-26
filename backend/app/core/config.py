@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     )
     default_organization_slug: str = "default-firm"
     default_organization_name: str = "Meridian Legal Group LLP"
+    scim_enabled: bool = False
+    scim_bearer_token: str = ""
 
     # Storage Security
     s3_server_side_encryption: str = "AES256"
@@ -168,5 +170,9 @@ def validate_production_security(settings: Settings) -> None:
         errors.append("AUTH_AUTO_SEED_DEMO_USERS must be false in production.")
     if "*" in settings.cors_origin_list:
         errors.append("CORS_ORIGINS must not contain wildcard '*' in production.")
+    if settings.scim_enabled and len(settings.scim_bearer_token.strip()) < 24:
+        errors.append(
+            "SCIM_BEARER_TOKEN must be >=24 characters when SCIM_ENABLED=true in production."
+        )
     if errors:
         raise RuntimeError("Production security validation failed: " + " | ".join(errors))

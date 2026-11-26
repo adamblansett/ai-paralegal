@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_settings, get_current_user, get_db
 from app.core.config import Settings
+from app.core.mfa import build_otpauth_uri, generate_totp_secret, verify_totp_code
 from app.core.oidc import OIDCVerificationError, default_jwks_cache, verify_oidc_id_token
 from app.core.rate_limit import rate_limit_auth
 from app.core.security import (
@@ -27,6 +28,8 @@ from app.models.user import RefreshToken, RevokedToken, User
 from app.schemas.auth import (
     AuthProvidersResponse,
     LogoutRequest,
+    MFAEnrollResponse,
+    MFAVerifyRequest,
     OIDCExchangeRequest,
     RefreshRequest,
     TokenResponse,
@@ -218,6 +221,16 @@ async def login_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is disabled.",
+        )
+    if user.mfa_enabled and (
+        not payload.totp_code
+        or not user.mfa_secret
+        or not verify_totp_code(user.mfa_secret, payload.totp_code)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Multi-factor TOTP verification code is required or invalid.",
+            headers={"WWW-Authenticate": "Bearer", "X-MFA-Required": "true"},
         )
 
     return await _issue_token_pair(session, user, settings)
@@ -442,6 +455,63 @@ async def oidc_exchange(
 @router.get("/me", response_model=UserRead)
 async def get_me(current_user: User = Depends(get_current_user)) -> UserRead:
     """Return profile and role of the currently authenticated user."""
+    return UserRead.model_validate(current_user)
+
+
+@router.post("/mfa/enroll", response_model=MFAEnrollResponse)
+async def enroll_mfa(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> MFAEnrollResponse:
+    """Generate and stage a TOTP MFA secret prior to confirmation."""
+    secret = generate_totp_secret()
+    current_user.mfa_secret = secret
+    await session.commit()
+    return MFAEnrollResponse(
+        secret=secret,
+        otpauth_uri=build_otpauth_uri(secret=secret, email=current_user.email),
+    )
+
+
+@router.post("/mfa/verify", response_model=UserRead)
+async def verify_mfa_enrollment(
+    payload: MFAVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> UserRead:
+    """Confirm TOTP enrollment with a valid authenticator code and activate MFA."""
+    if not current_user.mfa_secret or not verify_totp_code(
+        current_user.mfa_secret, payload.code
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid TOTP verification code.",
+        )
+    current_user.mfa_enabled = True
+    await session.commit()
+    await session.refresh(current_user)
+    return UserRead.model_validate(current_user)
+
+
+@router.post("/mfa/disable", response_model=UserRead)
+async def disable_mfa(
+    payload: MFAVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> UserRead:
+    """Disable TOTP MFA after verifying an active authenticator code."""
+    if current_user.mfa_enabled and (
+        not current_user.mfa_secret
+        or not verify_totp_code(current_user.mfa_secret, payload.code)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid TOTP verification code.",
+        )
+    current_user.mfa_enabled = False
+    current_user.mfa_secret = None
+    await session.commit()
+    await session.refresh(current_user)
     return UserRead.model_validate(current_user)
 
 

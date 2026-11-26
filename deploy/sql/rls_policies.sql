@@ -104,3 +104,30 @@ CREATE POLICY webhooks_tenant_isolation ON webhook_subscriptions
         OR current_setting('app.current_organization_id', true) = ''
         OR organization_id = current_setting('app.current_organization_id', true)::uuid
     );
+
+ALTER TABLE matter_obligations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE matter_obligations FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS obligations_tenant_isolation ON matter_obligations;
+CREATE POLICY obligations_tenant_isolation ON matter_obligations
+    USING (
+        EXISTS (
+            SELECT 1 FROM matters m
+            WHERE m.id = matter_obligations.matter_id
+              AND (
+                  current_setting('app.current_organization_id', true) IS NULL
+                  OR current_setting('app.current_organization_id', true) = ''
+                  OR m.organization_id = current_setting('app.current_organization_id', true)::uuid
+              )
+        )
+    );
+
+ALTER TABLE ethical_walls ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ethical_walls FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ethical_walls_tenant_isolation ON ethical_walls;
+CREATE POLICY ethical_walls_tenant_isolation ON ethical_walls
+    USING (
+        organization_id IS NULL
+        OR current_setting('app.current_organization_id', true) IS NULL
+        OR current_setting('app.current_organization_id', true) = ''
+        OR organization_id = current_setting('app.current_organization_id', true)::uuid
+    );

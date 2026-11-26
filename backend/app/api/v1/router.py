@@ -11,17 +11,21 @@ from app.api.v1 import (
     findings,
     health,
     integrations,
+    legal_ops,
     matters,
     metrics,
     playbooks,
+    scim,
 )
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(health.router)
 api_v1_router.include_router(auth.router)
+api_v1_router.include_router(scim.router)
 api_v1_router.include_router(admin.router)
 api_v1_router.include_router(playbooks.router)
 api_v1_router.include_router(matters.router)
+api_v1_router.include_router(legal_ops.router)
 api_v1_router.include_router(documents.router)
 api_v1_router.include_router(analyses.router)
 api_v1_router.include_router(findings.router)

@@ -1,5 +1,6 @@
 import json
 import time
+from collections.abc import AsyncIterator
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -234,3 +235,71 @@ class ModelRouter:
         raise ProviderError(
             "All LLM providers failed for structured generation: " + " | ".join(errors)
         )
+
+    async def stream_text(
+        self,
+        request: LLMRequest,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        enable_fallback: bool = True,
+    ) -> AsyncIterator[tuple[str, str, str, dict[str, int]]]:
+        """Stream text tokens with cloud PII/privilege guardrails and provider fallback."""
+        candidates = self._build_candidate_chain(provider=provider, enable_fallback=enable_fallback)
+        errors: list[str] = []
+        tracer = get_tracer("ai_paralegal.llm")
+
+        with tracer.start_as_current_span("llm.stream_text") as span:
+            span.set_attribute("llm.task_kind", request.task_kind)
+            for idx, candidate_name in enumerate(candidates):
+                prov = self.get_provider(candidate_name)
+                candidate_model = self.resolve_task_model(
+                    candidate_name,
+                    request.task_kind,
+                    model if idx == 0 else None,
+                )
+                t0 = time.perf_counter()
+                emitted_any = False
+                token_chars = 0
+                try:
+                    effective_request, redaction_summary = self._prepare_cloud_request(
+                        candidate_name, request
+                    )
+                    resolved_name = candidate_model or "mock-legal-deterministic-v1"
+                    async for delta in prov.stream_text(
+                        effective_request,
+                        model=candidate_model,
+                    ):
+                        emitted_any = True
+                        token_chars += len(delta)
+                        yield delta, prov.name, resolved_name, redaction_summary
+
+                    latency_ms = int((time.perf_counter() - t0) * 1000)
+                    metrics_registry.record_llm_call(
+                        provider=prov.name,
+                        model_name=resolved_name,
+                        task_kind=request.task_kind,
+                        status="success",
+                        latency_ms=latency_ms,
+                        prompt_tokens=max(1, len(effective_request.user_prompt.split())),
+                        completion_tokens=max(1, token_chars // 4),
+                    )
+                    span.set_attribute("llm.provider", prov.name)
+                    span.set_attribute("llm.model", resolved_name)
+                    span.set_attribute("llm.latency_ms", latency_ms)
+                    return
+                except ProviderError as exc:
+                    latency_ms = int((time.perf_counter() - t0) * 1000)
+                    metrics_registry.record_llm_call(
+                        provider=candidate_name,
+                        model_name=candidate_model or "default",
+                        task_kind=request.task_kind,
+                        status="error",
+                        latency_ms=latency_ms,
+                    )
+                    errors.append(f"{candidate_name}: {exc}")
+                    if emitted_any:
+                        raise
+                    continue
+
+        raise ProviderError("All LLM providers failed for streaming: " + " | ".join(errors))

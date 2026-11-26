@@ -23,6 +23,7 @@ def test_alembic_upgrade_head_creates_all_core_tables(tmp_path: Path) -> None:
         doc_columns = {col["name"] for col in inspector.get_columns("documents")}
         matter_columns = {col["name"] for col in inspector.get_columns("matters")}
         audit_columns = {col["name"] for col in inspector.get_columns("audit_logs")}
+        user_columns = {col["name"] for col in inspector.get_columns("users")}
     finally:
         sync_engine.dispose()
 
@@ -40,8 +41,11 @@ def test_alembic_upgrade_head_creates_all_core_tables(tmp_path: Path) -> None:
         "revoked_tokens",
         "organizations",
         "webhook_subscriptions",
+        "matter_obligations",
+        "ethical_walls",
     }
     assert expected.issubset(tables)
+    assert {"mfa_enabled", "mfa_secret", "scim_external_id"}.issubset(user_columns)
     assert {
         "bates_start",
         "bates_end",

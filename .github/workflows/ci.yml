@@ -180,3 +180,18 @@ jobs:
           scanners: vuln,misconfig,secret
           severity: CRITICAL,HIGH
           exit-code: "0"
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive deploy/terraform
+      - name: Validate Terraform configuration
+        working-directory: deploy/terraform
+        run: |
+          terraform init -backend=false
+          terraform validate

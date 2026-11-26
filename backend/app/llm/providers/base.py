@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -13,7 +14,7 @@ class ProviderError(RuntimeError):
 
 
 class LLMProvider(ABC):
-    """Abstract provider interface for structured legal LLM generation."""
+    """Abstract provider interface for structured and streaming legal LLM generation."""
 
     name: str
 
@@ -30,3 +31,15 @@ class LLMProvider(ABC):
         Returns:
             `(parsed_model, resolved_model_name, raw_text, token_usage)`
         """
+
+    async def stream_text(
+        self,
+        request: LLMRequest,
+        *,
+        model: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream progressive text tokens for interactive research/drafting workflows."""
+        _ = (request, model)
+        if False:
+            yield ""
+        raise ProviderError(f"Text streaming is not supported by provider '{self.name}'.")

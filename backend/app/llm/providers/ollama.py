@@ -1,3 +1,5 @@
+import json
+from collections.abc import AsyncIterator
 from typing import TypeVar
 
 import httpx
@@ -82,3 +84,45 @@ class OllamaProvider(LLMProvider):
             total_tokens=prompt_tokens + completion_tokens,
         )
         return parsed, requested, raw_text, usage
+
+    async def stream_text(
+        self,
+        request: LLMRequest,
+        *,
+        model: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream tokens incrementally from Ollama `/api/chat` with `stream=True`."""
+        requested = model or self.settings.ollama_default_model
+        resolved = self.resolve_model_tag(requested)
+        url = f"{self.settings.ollama_base_url.rstrip('/')}/api/chat"
+        payload = {
+            "model": resolved,
+            "stream": True,
+            "options": {
+                "temperature": request.temperature,
+                "num_predict": request.max_tokens,
+            },
+            "messages": [
+                {"role": "system", "content": request.system_prompt},
+                {"role": "user", "content": request.user_prompt},
+            ],
+        }
+        try:
+            async with (
+                httpx.AsyncClient(
+                    timeout=self.settings.llm_request_timeout_seconds
+                ) as client,
+                client.stream("POST", url, json=payload) as resp,
+            ):
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    chunk = json.loads(line)
+                    delta = str(chunk.get("message", {}).get("content") or "")
+                    if delta:
+                        yield delta
+                    if chunk.get("done"):
+                        break
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Ollama streaming HTTP error ({resolved}): {exc}") from exc

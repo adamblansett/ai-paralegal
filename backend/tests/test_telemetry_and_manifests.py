@@ -87,6 +87,8 @@ def test_deploy_manifests_monitoring_and_helm_valid() -> None:
         "audit_logs",
         "playbooks",
         "webhook_subscriptions",
+        "matter_obligations",
+        "ethical_walls",
     ):
         assert "ENABLE ROW LEVEL SECURITY" in joined_sql
         assert f"{table} FORCE ROW LEVEL SECURITY" in joined_sql
@@ -176,3 +178,32 @@ def test_deploy_manifests_monitoring_and_helm_valid() -> None:
             (repo_root / ".github" / "workflows" / wf).read_text(encoding="utf-8")
         )
         assert "jobs" in parsed_wf
+
+    # 5. Word add-in DOM XSS hygiene check (no raw innerHTML template interpolation)
+    taskpane_js = (repo_root / "word-addin" / "taskpane.js").read_text(encoding="utf-8")
+    assert "innerHTML" not in taskpane_js
+    assert "textContent" in taskpane_js
+
+    # 6. Terraform IaC & Operations Runbook presence and security controls
+    tf_dir = repo_root / "deploy" / "terraform"
+    for tf_file in (
+        "versions.tf",
+        "variables.tf",
+        "main.tf",
+        "outputs.tf",
+        "terraform.tfvars.example",
+    ):
+        assert (tf_dir / tf_file).is_file()
+    tf_main = (tf_dir / "main.tf").read_text(encoding="utf-8")
+    for required_setting in (
+        'sse_algorithm     = "aws:kms"',
+        "block_public_acls       = true",
+        "storage_encrypted       = true",
+        "at_rest_encryption_enabled = true",
+        "transit_encryption_enabled = true",
+    ):
+        assert required_setting in tf_main
+
+    runbook = (repo_root / "docs" / "OPERATIONS_RUNBOOK.md").read_text(encoding="utf-8")
+    assert "NOSUPERUSER" in runbook
+    assert "rls_policies.sql" in runbook

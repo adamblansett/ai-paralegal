@@ -1,5 +1,7 @@
+import asyncio
 import re
 from collections import defaultdict
+from collections.abc import AsyncIterator
 from typing import Literal, TypeVar
 
 from pydantic import BaseModel
@@ -94,6 +96,32 @@ class MockLLMProvider(LLMProvider):
             total_tokens=prompt_toks + comp_toks,
         )
         return validated, resolved_model, raw_text, usage
+
+    async def stream_text(
+        self,
+        request: LLMRequest,
+        *,
+        model: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream deterministic grounded response tokens word-by-word for SSE research UI."""
+        _ = model
+        chunks = request.context_chunks
+        if request.task_kind == "qa_research":
+            question = str(request.metadata.get("question", request.user_prompt))
+            text = self._run_qa_research(question, chunks).answer
+        else:
+            draft_type = str(request.metadata.get("draft_type", "internal_memo"))
+            instructions = str(request.metadata.get("instructions", "Draft matter summary"))
+            text = self._run_drafting(draft_type, instructions, chunks).draft_markdown
+
+        words = text.split(" ")
+        step = 3
+        for idx in range(0, len(words), step):
+            segment = " ".join(words[idx : idx + step])
+            if idx + step < len(words):
+                segment += " "
+            yield segment
+            await asyncio.sleep(0)
 
     def _run_contract_review(
         self, chunks: list[SourceChunkContext], request: LLMRequest

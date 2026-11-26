@@ -16,6 +16,7 @@ from app.api.deps import (
 from app.core.config import Settings
 from app.models.document import Document
 from app.models.finding import ExtractedFinding
+from app.models.legal_ops import EthicalWall
 from app.models.matter import Matter
 from app.models.user import MatterMembership, User
 from app.schemas.auth import MatterMemberAdd, MatterMemberRead
@@ -188,6 +189,11 @@ async def list_matters(
 
     if status_filter:
         stmt = stmt.where(Matter.status == status_filter)
+    walled_ids_stmt = select(EthicalWall.matter_id).where(
+        EthicalWall.user_id == current_user.id,
+        EthicalWall.is_active.is_(True),
+    )
+    stmt = stmt.where(~Matter.id.in_(walled_ids_stmt))
     matters = list((await session.execute(stmt)).scalars().all())
     stats_map = await _compute_matter_stats(session, [m.id for m in matters])
     return [_to_matter_read(m, stats_map[m.id]) for m in matters]

@@ -38,3 +38,7 @@ python -m evals.runner --compare "mock:default,ollama:llama-3.1-8b-instruct,olla
 # Include attorney-approved regression feedback exported from a matter:
 python -m evals.runner --provider mock --merge-feedback matter_eval_feedback.json --markdown
 ```
+
+## Automated Live Benchmark Workflow
+
+Trigger [.github/workflows/live-evals.yml](../../.github/workflows/live-evals.yml) via **Actions → Live LLM Evaluations → Run workflow** (with `GEMINI_API_KEY` configured as a repository secret or a reachable Ollama endpoint) to record live multi-model scorecards and upload JSON/Markdown artifacts.
